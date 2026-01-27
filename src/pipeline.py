@@ -1,16 +1,12 @@
-import torch
-import yaml
 import os
 import json
 import mlflow
-from mlflow import pytorch as mlflow_pytorch
 import hashlib
 import pandas as pd
-from datasets import Dataset
 
 from logger import logging
-from data.data_ingestion import load_data, save_data, load_params
-from data.data_preprocessing import preprocess_data, save_data as save_preprocessed_data
+from data_manipulation.data_ingestion import load_data, save_data, load_params
+from data_manipulation.data_preprocessing import preprocess_data, save_data as save_preprocessed_data
 from model.model_building import train_model, load_data as load_data_for_model
 
 from sklearn.model_selection import train_test_split
