@@ -1,9 +1,10 @@
 artifacts/
-data/
+./data/
 docs/
 logs/
 mlruns/
 runs/
+data/
 venv/
 mlflow.db
 __pycache__/
