@@ -1,6 +1,8 @@
 from transformers import AutoModelForSequenceClassification
 import pickle
-import logging
+
+from src.logger import logging
+
 def save_model(model: AutoModelForSequenceClassification, file_path: str) -> None:
     try:
         with open(file_path, 'wb') as file:

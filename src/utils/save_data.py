@@ -1,7 +1,8 @@
 import pandas as pd
 import os
-import logging
-from constants import TRAIN_DATA_FILE, VAL_DATA_FILE
+
+from src.logger import logging
+from src.constants import TRAIN_DATA_FILE, VAL_DATA_FILE
 
 def save_data(train_data: pd.DataFrame, val_data: pd.DataFrame, data_path: str) -> None:
     """

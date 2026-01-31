@@ -1,21 +1,20 @@
-import logging
 from transformers import AutoTokenizer
 import pandas as pd
-from utils.load_data import load_data
-from utils.save_data import save_data
-from constants import PREPROCESSED_DATA_DIR, TRAIN_DATA_FILE, VAL_DATA_FILE, PARAMS_FILE, RAW_DATA_DIR, MODEL_DIR
-from utils.load_params import load_params
 import os
 
+from src.logger import logging
+from src.utils.load_data import load_data
+from src.utils.save_data import save_data
+from src.constants import PREPROCESSED_DATA_DIR, TRAIN_DATA_FILE, VAL_DATA_FILE, RAW_DATA_DIR
 
-def preprocess_data() -> None:
+
+def preprocess_data(params: dict) -> None:
     """
         Preprocess the data
     """
     try:
         logging.debug('Pre-processing...')
 
-        params = load_params(params_path=PARAMS_FILE)
         model_name = params['model_name']
         max_length = params['max_length']
 
@@ -57,9 +56,3 @@ def preprocess_data() -> None:
     except Exception as e:
         logging.error(f'Unexpected error occured while preprocessing: {e}')
         raise
-
-def main():
-    preprocess_data()
-
-if __name__ == '__main__':
-    main()
