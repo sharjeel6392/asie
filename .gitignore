@@ -8,3 +8,4 @@ data/
 venv/
 mlflow.db
 __pycache__/
+model/
