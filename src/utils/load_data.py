@@ -1,13 +1,20 @@
 import pandas as pd
-import logging
+
+from src.logger import logging
+
 def load_data(data_path: str):
     """
         Load data from a csv file
     """
     try:
         df = pd.read_parquet(data_path)
+        
+        if df.empty:
+            raise ValueError('Dataset is empty')
+        
         logging.info(f'Data loaded from {data_path}')
         return df
+    
     except pd.errors.ParserError as e:
         logging.error(f'Failed to parse the parquet file: {e}')
         raise
