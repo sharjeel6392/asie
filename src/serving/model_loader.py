@@ -4,8 +4,8 @@ import mlflow
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-from src.logger import logging
-from src.constants import EXPERIMENT_NAME
+from logger import logging
+from constants import EXPERIMENT_NAME
 
 class ModelLoader:
     '''
@@ -17,6 +17,7 @@ class ModelLoader:
 
         self.model = None
         self.tokenizer = None
+        self.run_id = None
 
     def _get_latest_run(self):
         client = mlflow.tracking.MlflowClient()
@@ -45,6 +46,8 @@ class ModelLoader:
 
         logging.info(f'Loading model from: {model_uri}')
         logging.info(f'Using device: {self.device}')
+
+        self.run_id = run_id
 
         model_local_path = mlflow.artifacts.download_artifacts(model_uri)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_local_path) #mlflow.pytorch.load_model(model_uri)

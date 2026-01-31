@@ -1,15 +1,17 @@
 # The Control Plane
 
 from fastapi import FastAPI, HTTPException
-from src.serving.schema import PredictRequest, PredictResponse
-from src.serving.model_loader import ModelLoader
-from src.serving.predictor import Predictor
-from src.logger import logging
+from serving.schema import PredictRequest, PredictResponse
+from serving.model_loader import ModelLoader
+from serving.predictor import Predictor
+from logger import logging
+from serving.logger import InferenceLogger
 
 app = FastAPI(title= 'ASIE Serving API')
 
 loader = ModelLoader(model_uri='runs:/latest/model')
-predictor = Predictor(loader=loader)
+logger = InferenceLogger()
+predictor = Predictor(loader=loader, logger= logger)
 
 @app.on_event('startup')
 def startup_event():
@@ -31,7 +33,12 @@ def health():
     - debugging
     It basically answers "is ASIE alive and ready?"
     '''
-    return {'status': 'ok', 'model_loader': loader.is_ready()}
+    return {
+        'status': 'ok', 
+        'model_loader': loader.is_ready(),
+        'device': loader.device,
+        'run_id': loader.run_id,
+        }
 
 @app.post('/predict', response_model=PredictResponse)
 def predict(req: PredictRequest):

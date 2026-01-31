@@ -14,8 +14,9 @@ class Predictor:
     away from HTTP
     '''
 
-    def __init__(self, loader):
+    def __init__(self, loader, logger):
         self.loader = loader
+        self.logger = logger
     
     def predict(self, text: str):
         start = time.time()
@@ -27,7 +28,13 @@ class Predictor:
         model = self.loader.model
         device = self.loader.device
 
-        inputs = tokenizer(text, return_tensors = 'pt', truncation=True, padding=True)
+        inputs = tokenizer(
+            text, 
+            return_tensors = 'pt',
+            truncation=True, 
+            padding=True,
+            max_length = 256
+        )
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
         with torch.no_grad():
@@ -39,8 +46,21 @@ class Predictor:
 
         latency_ms = (time.time() - start) * 1000
 
-        return {
-            'label': str(idx.item()),
+        label_name = model.config.id2label[idx.item()]
+        print(f"LABEL_NAME: {label_name}")
+
+        result = {
+            'label': label_name,
             'score': float(score.item()),
             'latency_ms': latency_ms,
         }
+        
+        self.logger.log(
+            text = text,
+            label = label_name,
+            score = float(score.item()),
+            latency_ms = latency_ms,
+            model_run_id = self.loader.run_id,
+        )
+
+        return result
