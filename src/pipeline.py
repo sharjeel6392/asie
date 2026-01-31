@@ -24,6 +24,14 @@ def get_git_hash():
         return subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip()
     except Exception:
         return "not-a-git-repo"
+    
+def dataset_stats(df: pd.DataFrame) -> dict:
+    return {
+        'rows': len(df),
+        'label_distribution': df['label'].value_counts().to_dict(),
+        'avg_sentence_length': float(df['sentence'].str.len().mean()),
+        'max_sentence_length': int(df['sentence'].str.len().max()),
+    }
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -49,6 +57,7 @@ def run_pipeline(overrides = None):
 
         logging.info(f'Initiating data ingestion')
         df = ingest_data(cfg)
+        stats = dataset_stats(df)
         data_hash = hash_df(df)
         logging.info(f'Data ingestion complete')
 
@@ -71,6 +80,7 @@ def run_pipeline(overrides = None):
             artifact_dict = {
                 'metrics': metrics,
                 'data_hash': data_hash,
+                'data_stats': stats,
                 'config': cfg,
                 'env': env_info,
                 'git_hash': git_hash,
@@ -84,6 +94,7 @@ def run_pipeline(overrides = None):
             mlflow.log_metrics(metrics)
             mlflow.log_artifact(os.path.join(ARTIFACTS_DIR, ARTIFACTS_FILE))
             mlflow.log_artifacts(model_temp_path, artifact_path="model")
+            mlflow.log_dict(stats, 'data_stats.json')
 
             logging.info('Model and artifacts logged to mlflow successfully.')
             logging.info(f'Metrics: {metrics}')
