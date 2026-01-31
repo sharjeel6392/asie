@@ -8,4 +8,6 @@ pyyaml
 tqdm
 accelerate>=0.26.0
 pytest 8.3.4
+fastapi uvicorn
+httpx
 -e .
