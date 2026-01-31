@@ -102,15 +102,27 @@ def run_pipeline(overrides = None):
         logging.error(f'Pipeline failed with error: {e}')
         raise
 
+def run_sweep(sweep_params):
+    for params in sweep_params:
+        run_pipeline(params)
 
 if __name__ == '__main__':
-    args = parse_args()
+    # args = parse_args()
 
-    overrides = {
-        'lr': args.lr,
-        'batch_size': args.batch_size,
-        'epochs': args.epochs,
-        'max_length': args. max_length,
-    }
+    # overrides = {
+    #     'lr': args.lr,
+    #     'batch_size': args.batch_size,
+    #     'epochs': args.epochs,
+    #     'max_length': args. max_length,
+    # }
     
-    run_pipeline(overrides)
+    # run_pipeline(overrides)
+
+    sweep = [
+        {'lr': 2e-5},
+        {'lr': 3e-5},
+        {'lr': 5e-5}
+    ]
+
+    run_sweep(sweep)
+    
