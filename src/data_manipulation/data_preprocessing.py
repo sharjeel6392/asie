@@ -8,7 +8,7 @@ from src.utils.save_data import save_data
 from src.constants import PREPROCESSED_DATA_DIR, TRAIN_DATA_FILE, VAL_DATA_FILE, RAW_DATA_DIR
 
 
-def preprocess_data(params: dict) -> None:
+def preprocess_data(params: dict) -> AutoTokenizer:
     """
         Preprocess the data
     """
@@ -52,6 +52,7 @@ def preprocess_data(params: dict) -> None:
         logging.debug('Pre-processing completed.')
 
         save_data(train_df, val_df, PREPROCESSED_DATA_DIR)
+        return tokenizer
         
     except Exception as e:
         logging.error(f'Unexpected error occured while preprocessing: {e}')

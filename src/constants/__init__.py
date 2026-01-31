@@ -17,6 +17,8 @@ ARTIFACTS_FILE = 'run_artifacts.json'
 
 MODEL_DIR = './model'
 MODEL_FILE = f'{MODEL_DIR}/model_artifact'
+TOKENIZER_FILE = 'tokenizer'
 
 MLRUNS_DIR = './mlruns'
 
+EXPERIMENT_NAME = 'ASIE_Week1'
