@@ -9,7 +9,7 @@ import argparse
 from src.logger import logging
 from src.data_manipulation.data_ingestion import ingest_data
 from src.data_manipulation.data_preprocessing import preprocess_data
-from src.model.model_building import train_model
+from src.models.model_building import train_model
 from src.utils.load_params import load_params
 from src.utils.reproducibility import set_seed, capture_env
 
