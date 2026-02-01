@@ -4,7 +4,7 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime
 import sys
 
-from src.constants import LOGS_DIR as LOG_DIR
+from constants import LOGS_DIR as LOG_DIR
 
 LOG_FILE = f"{datetime.now().strftime('%m_%d_%Y_%H_%M_%S')}.log"
 MAX_LOG_SIZE = 5 * 1024 * 1024

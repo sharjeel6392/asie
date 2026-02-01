@@ -9,12 +9,12 @@ import argparse
 from src.logger import logging
 from src.data_manipulation.data_ingestion import ingest_data
 from src.data_manipulation.data_preprocessing import preprocess_data
-from src.model.model_building import train_model
+from src.models.model_building import train_model
 from src.utils.load_params import load_params
 from src.utils.reproducibility import set_seed, capture_env
 
 
-from constants import PARAMS_FILE, ARTIFACTS_DIR, ARTIFACTS_FILE
+from constants import PARAMS_FILE, ARTIFACTS_DIR, ARTIFACTS_FILE, TOKENIZER_FILE
 
 def hash_df(df: pd.DataFrame):
     return hashlib.md5(df.to_csv(index = False).encode()).hexdigest()
@@ -64,7 +64,7 @@ def run_pipeline(overrides = None):
         # Data Preprocessing
 
         logging.info('Starting data preprocessing...')
-        preprocess_data(cfg)
+        tokenizer = preprocess_data(cfg)
         logging.info('Data preprocessing completed and saved.')
 
         logging.info('Starting model training and mlflow logging...')
@@ -94,6 +94,11 @@ def run_pipeline(overrides = None):
             mlflow.log_metrics(metrics)
             mlflow.log_artifact(os.path.join(ARTIFACTS_DIR, ARTIFACTS_FILE))
             mlflow.log_artifacts(model_temp_path, artifact_path="model")
+            
+            tokenizer_file_path = os.path.join(ARTIFACTS_DIR, TOKENIZER_FILE)
+            tokenizer.save_pretrained(tokenizer_file_path)
+            
+            mlflow.log_artifacts(tokenizer_file_path, artifact_path='tokenizer')
             mlflow.log_dict(stats, 'data_stats.json')
 
             logging.info('Model and artifacts logged to mlflow successfully.')
