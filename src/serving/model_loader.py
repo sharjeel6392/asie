@@ -1,17 +1,19 @@
 # Lifecycle Management
 
 import mlflow
+import mlflow.artifacts
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 from logger import logging
 from constants import EXPERIMENT_NAME
+from models.model_resolver import get_promoted_model
 
 class ModelLoader:
     '''
     Loading models is expensive and must happen once, not per request.
     '''
-    def __init__(self, model_uri = None, device = None):
+    def __init__(self, device = None):
         self.experiment_name = EXPERIMENT_NAME
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -19,30 +21,14 @@ class ModelLoader:
         self.tokenizer = None
         self.run_id = None
 
-    def _get_latest_run(self):
-        client = mlflow.tracking.MlflowClient()
-        exp = client.get_experiment_by_name(self.experiment_name)
-
-        if exp is None:
-            raise RuntimeError(f"Experiment '{self.experiment_name}' not found.")
-
-        runs = client.search_runs(
-            experiment_ids = [exp.experiment_id],
-            order_by = ['attributes.start_time DESC'],
-            max_results = 1,
-        )
-
-        if not runs:
-            raise RuntimeError('No MLflow runs found')
-        
-        return runs[0].info.run_id
-
     def load(self):
         """
         Load model + tokenizer here.
         """
-        run_id = self._get_latest_run()
-        model_uri = f'runs:/{run_id}/model'
+        model_info = get_promoted_model()
+        model_uri = f'runs:/{model_info['run_id']}/model'
+        run_id = model_info['run_id']
+        logging.info(f'Loaded model is: {model_info}')
 
         logging.info(f'Loading model from: {model_uri}')
         logging.info(f'Using device: {self.device}')

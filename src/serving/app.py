@@ -9,7 +9,7 @@ from serving.logger import InferenceLogger
 
 app = FastAPI(title= 'ASIE Serving API')
 
-loader = ModelLoader(model_uri='runs:/latest/model')
+loader = ModelLoader()
 logger = InferenceLogger()
 predictor = Predictor(loader=loader, logger= logger)
 
