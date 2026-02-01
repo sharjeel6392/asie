@@ -1,5 +1,4 @@
 artifacts/
-./data/
 docs/
 logs/
 mlruns/
@@ -9,3 +8,7 @@ venv/
 mlflow.db
 __pycache__/
 model/
+src/UNKNOW*
+!*.dvc
+!data/data_manifest.yaml
+!model/model_registry.yaml

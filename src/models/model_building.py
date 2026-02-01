@@ -4,7 +4,7 @@ from datasets import Dataset
 from transformers import AutoModelForSequenceClassification, Trainer, TrainingArguments
 
 from src.logger import logging
-from src.model.model_eval import compute_metrics
+from src.models.model_eval import compute_metrics
 from src.utils.load_data import load_data
 from src.constants import PREPROCESSED_DATA_DIR, TRAIN_DATA_FILE, VAL_DATA_FILE, MODEL_DIR, MODEL_FILE
 
