@@ -52,7 +52,7 @@ def health():
         }
 
 @app.post('/predict', response_model=PredictResponse)
-def predict(req: PredictRequest):
+async def predict(req: PredictRequest):
     '''
     Prediction endpoint; a public interface
     '''
