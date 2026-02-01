@@ -1,13 +1,36 @@
+# --- Core ML & Training Pipeline ---
+# Used for model initialization, training loop, and evaluation
 torch
 transformers
-datasets<3.0.0
 scikit-learn
-mlflow
 pandas
+numpy
+datasets<3.0.0
 pyyaml
-tqdm
+
+# --- Data Layer & Versioning ---
+# Used for canonical Parquet format and dataset hashing
+pyarrow
+fastparquet
+dvc
 accelerate>=0.26.0
+
+# --- Serving & Inference Layer (Week 3) ---
+# Used for the production-style inference service
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+
+# --- Experiment Tracking & Observability ---
+# Used for artifact persistence and inference logging
+mlflow
+dagshub  # Commonly used with MLflow for remote tracking
+
+# --- Testing & Quality Assurance ---
+# Used for system-level smoke tests
 pytest 8.3.4
-fastapi uvicorn
-httpx
+httpx    # Required for FastAPI's TestClient
+
+tqdm
 -e .
