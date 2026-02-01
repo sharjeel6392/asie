@@ -1,0 +1,25 @@
+dataset:
+  name: financial_phrasebank
+  version: v1
+  description: Financial sentiment classification dataset
+
+raw_data:
+  path: data/external/financial_phrasebank.csv
+  format: csv
+
+canonical_data:
+  path: data/financial_phrasebank.parquet
+  format: parquet
+
+schema:
+  sentence: string
+  label: integer
+
+splits:
+  train: data/raw/train_data.parquet
+  val: data/raw/val_data.parquet
+  seed: 42
+
+stats:
+  total_rows: 2264
+  hash: 40058e7be3971e51ae11cbe2c86602f0d7716d80c9f0e05f379adbd02ae3e141

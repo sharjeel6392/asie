@@ -18,7 +18,11 @@ class Predictor:
         self.loader = loader
         self.logger = logger
     
-    def predict(self, text: str):
+    def predict(self, text):
+        if isinstance(text, str):
+            texts = [text]
+        else:
+            texts = text
         start = time.time()
 
         if not self.loader.is_ready():
@@ -29,11 +33,10 @@ class Predictor:
         device = self.loader.device
 
         inputs = tokenizer(
-            text, 
+            texts, 
             return_tensors = 'pt',
             truncation=True, 
             padding=True,
-            max_length = 256
         )
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
@@ -41,26 +44,27 @@ class Predictor:
             outputs = model(**inputs)
             logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
             probs = torch.softmax(logits, dim=-1)
+        predictions = []
+        for i, prob in enumerate(probs):
+            score, idx = torch.max(prob, dim = -1)
+            label_name = model.config.id2label[idx.item()]
+            
+            predictions.append(
+                {
+                    'label': label_name,
+                    'score': float(score.item())
+                }
+            )
 
-        score, idx = torch.max(probs, dim = -1)
-
+            self.logger.log(
+                text = texts[i],
+                label = label_name,
+                score = float(score.item()),
+                latency_ms = 0.0,
+            )
         latency_ms = (time.time() - start) * 1000
-
-        label_name = model.config.id2label[idx.item()]
-        print(f"LABEL_NAME: {label_name}")
-
         result = {
-            'label': label_name,
-            'score': float(score.item()),
-            'latency_ms': latency_ms,
+            'predictions': predictions,
+            'latency_ms': latency_ms
         }
-        
-        self.logger.log(
-            text = text,
-            label = label_name,
-            score = float(score.item()),
-            latency_ms = latency_ms,
-            model_run_id = self.loader.run_id,
-        )
-
         return result

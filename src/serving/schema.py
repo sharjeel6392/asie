@@ -7,13 +7,17 @@ from pydantic import BaseModel
     - Reject bad requests
     - Generate Swagger docs
 '''
-from typing import List, Optional
+from typing import List, Optional, Union
 
 class PredictRequest(BaseModel):
     '''
     This defines "What must a client send me?"
     '''
-    text: str
+    text: Union[str, List[str]]
+
+class Prediction(BaseModel):
+    label: str
+    score: float
 
 class PredictResponse(BaseModel):
     '''
@@ -22,7 +26,6 @@ class PredictResponse(BaseModel):
         - Docs auto-generation
         - Client consistency
     '''
-    label: str
-    score: float
+    predictions: List[Prediction]
     model_version: Optional[str] = None
     latency_ms: Optional[float] = None
