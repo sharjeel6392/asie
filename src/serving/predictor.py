@@ -2,6 +2,7 @@
 
 import time
 import torch
+from constants import MAX_BATCH_SIZE
 
 class Predictor:
     '''
@@ -19,10 +20,14 @@ class Predictor:
         self.logger = logger
     
     def predict(self, text):
+        
         if isinstance(text, str):
             texts = [text]
         else:
             texts = text
+        if len(texts) > MAX_BATCH_SIZE:
+            raise ValueError(f'Batch size {len(texts)} exceeds max size of {MAX_BATCH_SIZE}')
+        
         start = time.time()
 
         if not self.loader.is_ready():

@@ -22,3 +22,5 @@ TOKENIZER_FILE = 'tokenizer'
 MLRUNS_DIR = './mlruns'
 
 EXPERIMENT_NAME = 'ASIE_Week1'
+
+MAX_BATCH_SIZE = 32
