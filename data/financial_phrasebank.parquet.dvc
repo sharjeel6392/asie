@@ -1,0 +1,5 @@
+outs:
+- md5: 7f69aa847c2e9bfc1f7ddc403d9ae595
+  size: 164200
+  hash: md5
+  path: financial_phrasebank.parquet
