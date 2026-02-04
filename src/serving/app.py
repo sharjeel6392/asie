@@ -2,12 +2,12 @@
 
 from fastapi import FastAPI, HTTPException
 
-from serving.schema import PredictRequest, PredictResponse
-from serving.model_loader import ModelLoader
-from serving.predictor import Predictor
-from logger import logging
-from serving.logger import InferenceLogger
-from model.model_resolver import get_promoted_model
+from src.serving.schema import PredictRequest, PredictResponse
+from src.serving.model_loader import ModelLoader
+from src.serving.predictor import Predictor
+from src.logger import logging
+from src.serving.logger import InferenceLogger
+from src.models.model_resolver import get_promoted_model
 
 
 app = FastAPI(title= 'ASIE Serving API')
@@ -27,11 +27,11 @@ def startup_event():
     global predictor, loader
     model_info = get_promoted_model()
     run_id = model_info['run_id']
-    model_uri = f'runs:/{run_id}/model'
+    model_uri = f'/app/mlruns/1/{run_id}/artifacts/model'
     loader = ModelLoader(model_uri = model_uri, run_id = run_id)
 
     loader.load()
-
+    app.state.model_ready = True
     logger = InferenceLogger(model_run_id=run_id)
     predictor = Predictor(loader = loader, logger=logger)
 

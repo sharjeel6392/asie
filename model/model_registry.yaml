@@ -1,7 +1,7 @@
 models:
   - name: asie-sentiment
     version: v1
-    run_id: e9837c8ad0e2465599fd1721cedf7652
+    run_id: b2ec6d4260e34424a0bbcec70ed609ab
     dataset:
       name: financial_phrasebank
       version: v1

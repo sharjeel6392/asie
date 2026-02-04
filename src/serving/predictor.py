@@ -2,7 +2,7 @@
 
 import time
 import torch
-from constants import MAX_BATCH_SIZE
+from src.constants import MAX_BATCH_SIZE
 
 class Predictor:
     '''

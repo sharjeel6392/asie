@@ -1,0 +1,7 @@
+!data/data_manifest.yaml
+data/
+artifacts/
+logs/
+pipelines/
+runs/
+venv/
