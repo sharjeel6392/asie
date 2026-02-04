@@ -1,6 +1,5 @@
 import mlflow
-import time
-from constants import EXPERIMENT_NAME
+from src.constants import EXPERIMENT_NAME
 
 class InferenceLogger:
     def __init__(self, model_run_id):

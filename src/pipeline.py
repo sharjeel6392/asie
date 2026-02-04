@@ -44,6 +44,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_pipeline(overrides = None):
+    os.environ.pop("MLFLOW_TRACKING_URI", None)
+    os.environ.pop("MLFLOW_REGISTRY_URI", None)
     try:
         cfg = load_params(PARAMS_FILE)
 
@@ -73,7 +75,8 @@ def run_pipeline(overrides = None):
         env_info = capture_env()
         git_hash = get_git_hash()
         # Model Training and Parameter logging with mlflow
-        with mlflow.start_run():
+        with mlflow.start_run() as run:
+            print(f'RUN ID: {run.info.run_id}')
 
             model_temp_path, metrics = train_model(cfg)
             logging.info(f'Model training completed. Saving artifacts...')
@@ -95,10 +98,10 @@ def run_pipeline(overrides = None):
             mlflow.log_artifact(os.path.join(ARTIFACTS_DIR, ARTIFACTS_FILE))
             mlflow.log_artifacts(model_temp_path, artifact_path="model")
             
-            tokenizer_file_path = os.path.join(ARTIFACTS_DIR, TOKENIZER_FILE)
+            tokenizer_file_path = os.path.join(ARTIFACTS_DIR, "tokenizer")
             tokenizer.save_pretrained(tokenizer_file_path)
             
-            mlflow.log_artifacts(tokenizer_file_path, artifact_path='tokenizer')
+            mlflow.log_artifacts(tokenizer_file_path, artifact_path=TOKENIZER_FILE)
             mlflow.log_dict(stats, 'data_stats.json')
 
             logging.info('Model and artifacts logged to mlflow successfully.')
@@ -125,8 +128,6 @@ if __name__ == '__main__':
 
     sweep = [
         {'lr': 2e-5},
-        {'lr': 3e-5},
-        {'lr': 5e-5}
     ]
 
     run_sweep(sweep)

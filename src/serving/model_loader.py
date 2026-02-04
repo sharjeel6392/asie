@@ -1,14 +1,15 @@
 # Lifecycle Management
 
 import mlflow
-import mlflow.tracking
+from mlflow import tracking
 import mlflow.artifacts
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from pathlib import Path
+import os
 
-from logger import logging
-from constants import EXPERIMENT_NAME
-from models.model_resolver import get_promoted_model
+from src.logger import logging
+from src.constants import EXPERIMENT_NAME
 
 class ModelLoader:
     '''
@@ -22,31 +23,44 @@ class ModelLoader:
         self.tokenizer = None
         self.run_id = run_id
         self.model_uri = model_uri
+        self.ready = False
 
     def load(self):
         """
         Load model + tokenizer here.
         """
-
-        logging.info(f'Loading model from: {self.model_uri}')
         logging.info(f'Using device: {self.device}')
 
-        model_local_path = mlflow.artifacts.download_artifacts(self.model_uri)
-        self.model = AutoModelForSequenceClassification.from_pretrained(model_local_path) #mlflow.pytorch.load_model(model_uri)
-        self.model.to(self.device)
-        self.model.eval()
-        
-        # If tokenizer was logged separately, load it. 
+        mlflow.set_tracking_uri('file:/app/mlruns')
+        logging.info(f'Loading model from run: {self.run_id}')
+        print("A : Breaks here?")
+        basePath =f'/app/mlruns/1/{self.run_id}/artifacts'
+        run_artifacts_path = mlflow.artifacts.download_artifacts(basePath)
+        print("B : Breaks here?")
+        logging.info(f'Artifacts downloaded to {run_artifacts_path}')
+
+        # Resolve local paths ONLY
+        model_path = os.path.join(basePath, 'model')
+        tokenizer_path = os.path.join(basePath, 'tokenizer')
+
+        logging.info(f"Model dir contents: {os.listdir(model_path)}")
+        logging.info(f"Tokenizer dir contents: {os.listdir(tokenizer_path)}")
+
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_local_path)
-            logging.info('Tokenizer loaded from model directory')
+            # Load from local filesystem
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+            print("C: Breaks here?")
+            self.model = AutoModelForSequenceClassification.from_pretrained(model_path)
+            print("D : Breaks here?")
+
+            self.model.to(self.device)
+            self.model.eval()
         except Exception as e:
-            logging.warning(f'Could not load tokenizer from model path: {e}. Trying a separate download...')
-            tokenizer_uri = f'runs:/{self.run_id}/tokenizer'
-            tok_path = mlflow.artifacts.download_artifacts(tokenizer_uri)
-            self.tokenizer = AutoTokenizer.from_pretrained(tok_path)
+            logging.error(f'Failed to load: {e}.')
+            raise e
         
         logging.info(f'Model and tokenizer loaded successfully. Model ready: {self.is_ready()}')
+        self.ready = True
     
     def is_ready(self):
-        return self.model is not None and self.tokenizer is not None
+        return self.ready
