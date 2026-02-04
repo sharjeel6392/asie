@@ -1,6 +1,7 @@
 # The Control Plane
 
 from fastapi import FastAPI, HTTPException
+import os
 
 from src.serving.schema import PredictRequest, PredictResponse
 from src.serving.model_loader import ModelLoader
@@ -27,8 +28,10 @@ def startup_event():
     global predictor, loader
     model_info = get_promoted_model()
     run_id = model_info['run_id']
-    model_uri = f'/app/mlruns/1/{run_id}/artifacts/model'
-    loader = ModelLoader(model_uri = model_uri, run_id = run_id)
+    
+    mlruns_base = os.getenv('MLRUNS_BASE_PATH', './mlruns')
+    artifact_uri = os.path.normpath(os.path.join(mlruns_base, '1',run_id, 'artifacts'))
+    loader = ModelLoader(artifact_uri = artifact_uri, run_id = run_id)
 
     loader.load()
     app.state.model_ready = True

@@ -4,6 +4,7 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV MLRUNS_BASE_PATH=/app/mlruns
 
 RUN apt-get update && apt-get install -y \
     build-essential \
