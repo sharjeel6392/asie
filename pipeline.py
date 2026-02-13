@@ -12,6 +12,7 @@ from src.data_manipulation.data_preprocessing import preprocess_data
 from src.models.model_building import train_model
 from src.utils.load_params import load_params
 from src.utils.reproducibility import set_seed, capture_env
+from src.serving.config import Settings
 
 
 from constants import PARAMS_FILE, ARTIFACTS_DIR, ARTIFACTS_FILE, TOKENIZER_FILE
@@ -44,8 +45,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_pipeline(overrides = None):
-    os.environ.pop("MLFLOW_TRACKING_URI", None)
-    os.environ.pop("MLFLOW_REGISTRY_URI", None)
     try:
         cfg = load_params(PARAMS_FILE)
 
@@ -54,8 +53,11 @@ def run_pipeline(overrides = None):
                 if v is not None:
                     cfg[k] = v
 
-        os.makedirs(ARTIFACTS_DIR, exist_ok= True)
+        mlflow.set_tracking_uri(Settings.MLFLOW_TRACKING_URI)
+        print(f"Connected to MLflow at: {mlflow.get_tracking_uri()}")
+
         mlflow.set_experiment(cfg['experiment_name'])
+        
 
         logging.info(f'Initiating data ingestion')
         df = ingest_data(cfg)
@@ -89,6 +91,17 @@ def run_pipeline(overrides = None):
                 'git_hash': git_hash,
             }
 
+            if not os.path.exists(ARTIFACTS_DIR):
+                os.makedirs(ARTIFACTS_DIR)
+                print(f"Created directory: {ARTIFACTS_DIR}")
+            
+            file_path = os.path.join(ARTIFACTS_DIR, ARTIFACTS_FILE)
+            if not os.path.exists(file_path):
+                # This 'with open' in 'w' mode will create the file automatically 
+                # as long as the directory exists.
+                print(f"File {ARTIFACTS_FILE} does not exist. It will be created now.")
+
+
             with open(os.path.join(ARTIFACTS_DIR, ARTIFACTS_FILE), 'w') as f:
                 json.dump(artifact_dict, f, indent = 2)
             mlflow.log_params(cfg)
@@ -106,6 +119,13 @@ def run_pipeline(overrides = None):
 
             logging.info('Model and artifacts logged to mlflow successfully.')
             logging.info(f'Metrics: {metrics}')
+
+            logging.info('Selecting and exporting the best performing model...') 
+            '''
+                Yet to add:
+                    A method to pick the best performing model. (call src/models/promote model.py)
+                    and then export the model and tokenizer artifacts from mlflow to local ./export_model by calling src/models/export_model.py
+            '''
     except Exception as e:
         logging.error(f'Pipeline failed with error: {e}')
         raise
