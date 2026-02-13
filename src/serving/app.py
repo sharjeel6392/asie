@@ -1,6 +1,7 @@
 # The Control Plane
 
 from fastapi import FastAPI, HTTPException
+import mlflow
 import os
 
 from src.serving.schema import PredictRequest, PredictResponse
@@ -8,7 +9,7 @@ from src.serving.model_loader import ModelLoader
 from src.serving.predictor import Predictor
 from src.logger import logging
 from src.serving.logger import InferenceLogger
-from src.models.model_resolver import get_promoted_model
+from src.serving.config import Settings
 
 
 app = FastAPI(title= 'ASIE Serving API')
@@ -26,16 +27,16 @@ def startup_event():
     - Server is warm
     '''
     global predictor, loader
-    model_info = get_promoted_model()
-    run_id = model_info['run_id']
+
+    print(f"Connected to MLflow at: {mlflow.get_tracking_uri()}")
     
-    mlruns_base = os.getenv('MLRUNS_BASE_PATH', './mlruns')
-    artifact_uri = os.path.normpath(os.path.join(mlruns_base, '1',run_id, 'artifacts'))
-    loader = ModelLoader(artifact_uri = artifact_uri, run_id = run_id)
+    loader = ModelLoader(
+        device= Settings.INFERENCE_DEVICE,
+    )
 
     loader.load()
-    app.state.model_ready = True
-    logger = InferenceLogger(model_run_id=run_id)
+
+    logger = InferenceLogger(model_run_id=Settings.MODEL_RUN_ID)
     predictor = Predictor(loader = loader, logger=logger)
 
 @app.get('/health')
@@ -51,7 +52,6 @@ def health():
         'status': 'ok', 
         'model_loader': loader is not None and loader.is_ready(),
         'device': loader.device if loader else None,
-        'run_id': loader.run_id if loader else None,
         }
 
 @app.post('/predict', response_model=PredictResponse)

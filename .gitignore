@@ -12,3 +12,4 @@ src/UNKNOW*
 !*.dvc
 !data/data_manifest.yaml
 !model/model_registry.yaml
+/.env

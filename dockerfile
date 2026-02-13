@@ -4,18 +4,21 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV MLRUNS_BASE_PATH=/app/mlruns
+ENV PYTHONPATH=/app
 
 RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --upgrade pip
 
 COPY requirements.txt .
 COPY pyproject.toml .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY src/ ./src/
+COPY exported_model/ ./exported_model
 
 EXPOSE 8000
 

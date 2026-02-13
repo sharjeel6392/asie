@@ -1,13 +1,13 @@
 models:
   - name: asie-sentiment
     version: v1
-    run_id: b2ec6d4260e34424a0bbcec70ed609ab
+    run_id: 6d7c7e81037d422ca47d5b4aa27cbce4
     dataset:
       name: financial_phrasebank
       version: v1
-      hash: 40058e7be3971e51ae11cbe2c86602f0d7716d80c9f0e05f379adbd02ae3e141
+      hash: 2101709accd934211c3063f104444f8d
     metrics:
-      eval_f1: 0.9668874172185431
-      eval_loss: 0.1513603776693344
+      eval_f1: 0.9535987340067041
+      eval_loss: 0.14914725720882416
     state: promoted
     created_at: 02/01/2026, 06:05:49 PM
