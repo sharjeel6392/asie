@@ -438,3 +438,296 @@ This enables:
 - Confidence distribution inspection
 - Model behavior auditing over time
 <p> Inference logging is intentionally decoupled from training runs.</p>
+
+## 📘 Week 4 - Promotion Architecture, SQLite MLflow & Shadow Deployment
+Week 4 marked the transition from the experimentation setup to structured MLOps infrastructure.<br>
+We formalized:
+- Model promotion workflow
+- SQLite-backed MLflow tracking
+- Standalone Docker inference
+- Structured SQLite inference logging
+- Production-safe shadow model execution
+This week represents the architectural shift from "local experimentation" to "deployable ML system".
+
+### 🧩 Part 1 - The MLflow File-Based problem
+#### Initial Setup
+Originally, MLflow used the default file-based backend:
+```powershell
+mlruns/
+```
+Artifacts were logged correctly during training:
+```powershell
+mlruns/<experiment_id>/<run_id>/artifacts/
+```
+Local inference worked when training and serving shared the same filesystem.
+
+#### 🚨 The Core Issue
+When using:
+```python
+mlflow.set_tracking_uri("file:./mlruns")
+```
+MLflow internally resolved it to an absolute Window path:
+```bash
+artifact_uri: file:C:/Users/user/Documents/ASIE/mlruns/<exp>/<run>/artifacts
+```
+The absolute path became permanently embedded in run metadata.<br>
+Inside Docker (Linux), that path does not exist. This caused:
+- Run not found errors
+- Artifact download failures
+- Broken meta.yaml behavior
+- Empty MLflow UI runs
+- Inconsistent experiment state
+<p>Even with proper Docker volume mounts, MLflow followed the absolute Windows path stored in metadata.<br>
+Docker was not the problem, the file-based MLflow backend was.
+
+#### 🧠 Architectural Realization
+File-based MLflow tracking:
+- Is not portable across OS boundaries
+- Hardcodes absolute paths
+- Couples experiment metadata to filesystem layout
+- Is not concurrency-safe
+- Does not scale cleanly
+<p>For a system intended to evolve, this architecture was fragile.
+
+### 🗄 Part 2 – Moving MLflow to SQLite Backend
+I migrated MLflow metadata storage to:
+```python
+sqlite:///mlflow.db
+```
+Important distinction:
+| Component | Purpose |
+| --------- | ------- |
+| Backend Store | Experiments, runs, metrics, params |
+| Artifact Store | Model weights, tokenizer files |
+
+With SQLite:
+- Metadata stored transactionally
+- ACID guarantees
+- Structured relational schema
+- Portable across Windows & Docker
+- Clear upgrade path to Postgres
+<p> Artifacts remain local. MLflow is now treated as an infrastructure, not just a folder.
+
+### 🏗 Part 3 - Model Promotion Architecture
+Key architectural decision:<br>
+Inference must NOT dynamically load artifacts from MLflow at runtime, as the runtime MLflow loading introduces dependencies on:
+- Tracking server
+- Database
+- Artifact store
+- Network availability
+- Mutable experiment metadata
+<p> This breaks portability.</p>
+
+#### Promotion Concept
+Training produces experimental runs. Serving requires immutable release artifacts. Hence, promotion converts:
+```nginx
+ExperimentRun → ApprovedReleaseArtifact
+```
+Promotion freezes:
+- Exact weights
+- Exact tokenizer
+- Exact configuration
+
+Equivalent to tagging a Git release.
+
+#### Final Promotion Flow
+##### Training Phase
+```scss
+train.py
+   ↓
+MLflow (SQLite backend)
+   ↓
+Artifacts logged locally
+```
+##### Promotion Phase
+```sql
+Select best run
+   ↓
+export_model.py
+   ↓
+Copy artifacts into exported_model/
+```
+##### Serving Phase (Docker)
+Docker image contains:
+```bash
+/app/exported_model/model/
+/app/exported_model/tokenizer/
+```
+No MLflow imports, no tracking URI, no runtime artifact downloads. The container is
+- Immutable
+- Deterministic
+- Portable
+- Infrastructure-independent
+
+### 🗂 Part 4 - Structured SQLite Inference Logging
+I replaced MLflow-based inference logging with a dedicated SQLite logging system.
+
+Architecture:
+```scss
+FastAPI Endpoint
+        ↓
+Predictor (pure inference)
+        ↓
+Repository Layer
+        ↓
+SQLite (inference.db)
+```
+Separation of concerns:
+- `predictor.py` → model inference only
+- `repository.py` → DB insert logic
+- `database.py` → connection + schema init
+- `schema.sql` → table definition
+- `app.py` → Orchestration
+
+#### Database Schema - `inference_logs`
+Each batch prediction logs one row per sample. Key fields are:
+- request_id
+- timestamp
+- input_data
+- primary_model_name
+- primary_model_version
+- primary_predictions
+- primary_latency_ms
+- shadow_model_name
+- shadow_model_version
+- shadow_predictions
+- shadow_latency_ms
+- disagreement
+- abs_diff
+- request_source
+
+The schema is shadow-ready by design.
+
+#### Batch-Safe Endpoint
+Even single inputs are treated as batch size 1:
+```python
+{'text': ['market look strong today']}
+```
+Each item:
+- Gets its own request_id
+- Logs per-sample latency
+- Generates independent DB row
+
+This ensures shadow comparability.
+
+#### Debugging Milestones
+##### 1. Schema mismatch issue
+Cause:
+- Existing SQLite DB had outdated schema
+- `CREATE TABLE IF NOT EXISTS` does not modify columns
+
+Fix:
+- Delete `inference.db`
+- Reinitialize schema
+
+##### 2. Batch iteration bug
+Issue:
+- A strong was iterated character-by-character
+- Only first letter of the predicted text was logged
+
+Root cause:
+- Endpoint expected list (even a singular text) but recieved string
+
+Fix:
+- Enfored list-based request schema
+
+#### 🧪 Docker Compatibility
+We ensured:
+- `inference.db` is NOT baked into image
+- DB created at runtime
+- Optional volume mount for persistence:
+```bash
+docker run -p 8000:8000 -v $(pwd)/data:/app/data image_name
+```
+Logs persist across container restarts.
+
+SQLite inspection:
+```bash
+sqlite data/inference.db
+.tables
+PRAGMA table_info(inference_logs);
+SELECT * FROM inference_logs;
+```
+
+### 🌘 Part 5 - Shadow Model Execution
+I implemented a production-grade shadow deployment.
+
+Architecture:
+```java
+Client → FastAPI → Primary Model (serves response)
+                    ↘ Shadow Model (silent execution)
+                          ↓
+                    SQLite Inference DB
+```
+
+#### Dual Model Setup
+Two exported DistilBERT variants:
+- Primary (v_01) and
+- Secondary (v_02)
+
+Loaded once at startup. Here, Primary = required; Shadow = optional
+
+#### Safe Shadow Loading
+Shadow loading wrapped in try/except. If shadow directory missing:
+- Warning logged
+- shadow_model = None
+- API continues normally and runs prediction on Primary
+
+Health endpoint:
+```json
+{
+    'primary_ready': True,
+    'shadow_ready': False,
+    'device': 'cpu'
+}
+```
+#### Safe Shadow Execution
+During prediction:
+- Shadow executed only if available
+- Wrapped in try/catch
+- Shadow failures never break request
+- DB fields become NULL when shadow absent
+
+Validation performed:
+- ✔ Delete shadow directory → API still works
+- ✔ Shadow crash → logged, not raised
+- ✔ Latency measurable
+- ✔ Primary always protected
+
+#### Disagreement and Drift Metrics
+Per sample, I logged:
+- disagreement (label mismatch)
+- abs_diff (score difference)
+- shadow_latency_ms
+- primary_latency_ms
+
+This enables:
+- promotion readiness evaluation
+- Drift groundwork
+- Offline shadow analysis
+
+### 🧠 Production Properties Achieved
+By the end of week 4, I achieved:
+- SQLite-backed MLflow tracking
+- Explicit model promotion step
+- Standalone Docker inference
+- Structured inference logging
+- Safe shadow deployment
+- Failure isolation
+- Latency observability
+- Promotion architecture foundation
+
+This mirrors the real-world MLOps systems used in:
+- Shadow testing
+- Canary releases
+- Gradual rollouts
+- Governance-driven model promotion
+
+### 🏁 Week 4 Status: Complete
+The system now cleanly separates:
+- Experimentation
+- Metadata tracking
+- Artifact promotion
+- Serving infrastructure
+- Production logging
+- Shadow experimentation
