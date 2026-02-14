@@ -147,7 +147,8 @@ if __name__ == '__main__':
     # run_pipeline(overrides)
 
     sweep = [
-        {'lr': 2e-5},
+        {'lr': 2e-5, 'epochs': 5, 'seed': 123},     # primary model
+        {'lr': 2e-4, 'epochs': 5},                  # shadow model
     ]
 
     run_sweep(sweep)

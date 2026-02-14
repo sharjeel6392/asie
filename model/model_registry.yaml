@@ -1,13 +1,27 @@
 models:
   - name: asie-sentiment
+    type: primary
     version: v1
-    run_id: 6d7c7e81037d422ca47d5b4aa27cbce4
+    run_id: e01e5e62db024765942763019e8a17a8
     dataset:
       name: financial_phrasebank
       version: v1
       hash: 2101709accd934211c3063f104444f8d
     metrics:
-      eval_f1: 0.9535987340067041
-      eval_loss: 0.14914725720882416
+      eval_f1: 0.9646312383592995
+      eval_loss: 0.1449805647134781
     state: promoted
-    created_at: 02/01/2026, 06:05:49 PM
+    created_at: 2026/02/14 23:20:08
+  - name: asie-sentiment-shadow
+    type: shadow
+    version: v2
+    run_id: 66f4f6363f8447dfb4256d465ec86e9a
+    dataset:
+      name: financial_phrasebank
+      version: v1
+      hash: 2101709accd934211c3063f104444f8d
+    metrics:
+      eval_f1: 0.9602491904487579
+      eval_loss: 0.23524315655231476
+    state: promoted
+    created_at: 2026/02/14 23:20:51

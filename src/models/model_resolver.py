@@ -16,7 +16,7 @@ def get_promoted_model():
         promoted,
         key = lambda x: x['created_at'],
         reverse = True
-    )[0]
+    )
 
 if __name__ == '__main__':
     print(get_promoted_model())
