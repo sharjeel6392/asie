@@ -11,7 +11,10 @@ class ModelLoader:
         self.device = device
         
         self.ready = False
-        self.model = None
+
+        self.primary_model = None
+        self.shadow_model = None
+
         self.tokenizer = None
 
     def load(self):
@@ -22,10 +25,15 @@ class ModelLoader:
 
         try:
             self.tokenizer = AutoTokenizer.from_pretrained("./exported_model/tokenizer")
-            self.model = AutoModelForSequenceClassification.from_pretrained("./exported_model/model")
 
-            self.model.to(self.device)
-            self.model.eval()
+            self.primary_model = AutoModelForSequenceClassification.from_pretrained("./exported_model/model")
+            self.shadow_model = AutoModelForSequenceClassification.from_pretrained("./exported_model/model")
+
+            self.primary_model.to(self.device)
+            self.primary_model.eval()
+
+            self.shadow_model.to(self.device)
+            self.shadow_model.eval()
 
             self.ready = True
 
@@ -35,29 +43,6 @@ class ModelLoader:
             logging.exception(f'Unexpected error occured while loading model artifacts: {e}')
             self.ready = False
             raise
-        
- 
-        # artifact_uri = os.path.normpath(os.path.join(self.mlruns_base, '1',self.run_id, 'artifacts'))
-        # run_artifacts_path = mlflow.artifacts.download_artifacts(artifact_uri=artifact_uri)
-
-        # # Resolve local paths ONLY
-        # model_path = os.path.join(run_artifacts_path, 'model')
-        # tokenizer_path = os.path.join(run_artifacts_path, 'tokenizer')
-        # model_path = mlflow.artifacts.download_artifacts(artifact_uri=model_path)
-        # if model_path is None:
-        #     raise ValueError
-        # tokenizer_path = mlflow.artifacts.download_artifacts(artifact_uri=tokenizer_path)
-
-        # try:
-        #     # Load from local filesystem
-        #     self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-        #     self.model = AutoModelForSequenceClassification.from_pretrained(model_path)
-
-        #     self.model.to(self.device)
-        #     self.model.eval()
-        # except Exception as e:
-        #     logging.error(f'Failed to load: {e}.')
-        #     raise e
     
     def is_ready(self) -> bool:
         return self.ready
