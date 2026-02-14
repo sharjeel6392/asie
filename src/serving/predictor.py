@@ -33,11 +33,12 @@ class Predictor:
         if not self.loader.is_ready():
             raise RuntimeError('Model not loaded')
         
-        tokenizer = self.loader.tokenizer
         if model_type == 'primary':
             model = self.loader.primary_model
+            tokenizer = self.loader.primary_tokenizer
         elif model_type == 'shadow':
             model = self.loader.shadow_model
+            tokenizer = self.loader.shadow_tokenizer
         else:
             logging.error("Model type invalid")
             raise

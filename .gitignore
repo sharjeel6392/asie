@@ -13,3 +13,4 @@ src/UNKNOW*
 !data/data_manifest.yaml
 !model/model_registry.yaml
 /.env
+/exported_model/
