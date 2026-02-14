@@ -1,7 +1,6 @@
 # The Control Plane
 
 from fastapi import FastAPI, HTTPException
-import mlflow
 import uuid
 from datetime import datetime
 import json
@@ -34,8 +33,6 @@ def startup_event():
     if connected == False:
         logging.error("No connection to the inference log db")
         raise
-
-    print(f"Connected to MLflow at: {mlflow.get_tracking_uri()}")
     
     loader = ModelLoader(
         device= Settings.INFERENCE_DEVICE,
@@ -73,18 +70,25 @@ async def predict(req: PredictRequest):
         # Primary Inference
         # ----------------------------------------
         
-        primary_pred = predictor.predict(req.text)
-        predictions = primary_pred['predictions']
+        primary_pred = predictor.predict(req.text, "primary")
+        primary_predictions = primary_pred['predictions']
         latency_ms = primary_pred['latency_ms']
 
-        per_sample_latency = latency_ms / len(predictions)
+        primary_per_sample_latency = latency_ms / len(primary_predictions)
 
         # ----------------------------------------
         # Shadow Inference (None for now)
         # ----------------------------------------
         
-        shadow_pred = None
-        shadow_latency = None
+        try:
+            shadow_preds = predictor.predict(req.text, "shadow")
+            shadow_predictions = shadow_preds['predictions']
+            shadow_latency = shadow_preds['latency_ms']
+            shadow_per_sample_latency = shadow_latency / len(shadow_predictions)            
+        except Exception as e:
+            logging.error(f'Shadow failed: {e}')
+            shadow_predictions = [{'predictions': {}, latency_ms: 0}] * len(req.text)
+            shadow_per_sample_latency = 0
 
         # ----------------------------------------
         # Comparison logic
@@ -93,11 +97,14 @@ async def predict(req: PredictRequest):
         disagreement = None
         abs_diff = None
 
-        # if shadow_pred is not None:
-        #     disagreement = int(primary_pred['predictions'] != shadow_pred)
-        #     abs_diff = abs(float(primary_pred['predictions']) - float(shadow_pred))
+        for i, text in enumerate(req.text):
+            primary = primary_predictions[i]
+            shadow = shadow_predictions[i]
 
-        for text, pred in zip(req.text, predictions):
+            if shadow is not None:
+                disagreement = int(primary['score'] != shadow['score'])
+                abs_diff = abs(float(primary['score'] - shadow['score']))
+
 
             record = {
                 "request_id": str(uuid.uuid4()),
@@ -107,13 +114,13 @@ async def predict(req: PredictRequest):
 
                 "primary_model_name": "DistilBertForSequenceClassification",
                 "primary_model_version": "v_01",
-                "primary_prediction": float(pred['score']),
-                "primary_latency_ms": per_sample_latency,
+                "primary_prediction": primary['label'],
+                "primary_latency_ms": primary_per_sample_latency,
 
-                "shadow_model_name": None,
-                "shadow_model_version": None,
-                "shadow_predictions": shadow_pred,
-                "shadow_latency_ms": shadow_latency,
+                "shadow_model_name": "DistilBertForSequenceClassification",
+                "shadow_model_version": 'v_02',
+                "shadow_predictions": shadow['label'],
+                "shadow_latency_ms": shadow_per_sample_latency,
 
                 "disagreement": disagreement,
                 "abs_diff": abs_diff,

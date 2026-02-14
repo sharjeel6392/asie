@@ -3,6 +3,7 @@
 import time
 import torch
 from src.constants import MAX_BATCH_SIZE
+from src.logger import logging
 
 class Predictor:
     '''
@@ -18,7 +19,7 @@ class Predictor:
     def __init__(self, loader):
         self.loader = loader
     
-    def predict(self, text):
+    def predict(self, text, model_type: str = 'primary'):
         
         if isinstance(text, str):
             texts = [text]
@@ -33,7 +34,13 @@ class Predictor:
             raise RuntimeError('Model not loaded')
         
         tokenizer = self.loader.tokenizer
-        model = self.loader.model
+        if model_type == 'primary':
+            model = self.loader.primary_model
+        elif model_type == 'shadow':
+            model = self.loader.shadow_model
+        else:
+            logging.error("Model type invalid")
+            raise
         device = self.loader.device
 
         inputs = tokenizer(
