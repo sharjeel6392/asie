@@ -1,16 +1,40 @@
-import mlflow
+import uuid
+from datetime import datetime
+from sqlite3 import Connection
 
 class InferenceLogger:
-    def __init__(self, model_run_id):
-        self.model_run_id = model_run_id
+    def __init__(self, db: Connection):
+        self.db = db
 
-    def log(self, *, text:str, label: str, score: float, latency_ms: float):
-        with mlflow.start_run(run_name = 'inference', nested=False):
-            mlflow.set_tag('type', 'inference')
-            mlflow.set_tag('model_run_id', self.model_run_id)
+    def log(self, predictions: list, latency_ms: float):
+        batch_id = str(uuid.uuid4())
 
-            mlflow.log_metric('latency_ms', latency_ms)
-            mlflow.log_metric('score', score)
-            mlflow.log_metric('text_length', len(text))
-            
-            mlflow.set_tag('prediction', label)
+        with self.db:
+            cur = self.db.cursor()
+            cur.execute("""
+                INSERT INTO inference_batch (batch_id, batch_size, latency_ms, created_at) VALUES (%s, %s, %s, %s)
+            """,(
+                    batch_id,
+                    len(predictions),
+                    latency_ms,
+                    datetime.now()
+                )
+            )
+
+            prediction_rows = [
+                (
+                    batch_id,
+                    p['text'],
+                    p['label'],
+                    p['score']
+                )
+                for p in predictions
+            ]
+
+            cur.executemany("""
+                INSERT INTO inference_prediction (batch_id, text, label, score) VALUES (%s, %s, %s, %s)
+            """, prediction_rows)
+
+        self.db.commit()
+
+        return batch_id

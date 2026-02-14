@@ -15,9 +15,8 @@ class Predictor:
     away from HTTP
     '''
 
-    def __init__(self, loader, logger):
+    def __init__(self, loader):
         self.loader = loader
-        self.logger = logger
     
     def predict(self, text):
         
@@ -56,17 +55,12 @@ class Predictor:
             
             predictions.append(
                 {
+                    'text': texts,
                     'label': label_name,
                     'score': float(score.item())
                 }
             )
 
-            self.logger.log(
-                text = texts[i],
-                label = label_name,
-                score = float(score.item()),
-                latency_ms = 0.0,
-            )
         latency_ms = (time.time() - start) * 1000
         result = {
             'predictions': predictions,
