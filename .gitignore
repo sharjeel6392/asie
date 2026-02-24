@@ -14,3 +14,4 @@ src/UNKNOW*
 !model/model_registry.yaml
 /.env
 /exported_model/
+asie-key-pair.pem
