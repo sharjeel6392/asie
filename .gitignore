@@ -15,3 +15,8 @@ src/UNKNOW*
 /.env
 /exported_model/
 asie-key-pair.pem
+asie-plan.tfplan
+.terraform
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup

@@ -4,7 +4,7 @@ resource "aws_vpc" "main" {
     cidr_block = var.vpc_cidr
 
     tags = {
-        Name = "my-vpc"
+        Name = "asie-vpc"
     }
 }
 
@@ -16,7 +16,7 @@ resource "aws_subnet" "public" {
     map_public_ip_on_launch = true
 
     tags = {
-        Name = "public-subnet"
+        Name = "asie-public-subnet"
     }
 }
 
@@ -27,7 +27,7 @@ resource "aws_subnet" "private" {
     availability_zone   = var.az
 
     tags = {
-        Name = "private-subnet"
+        Name = "asie-private-subnet"
     }
 }
 
@@ -36,7 +36,7 @@ resource "aws_internet_gateway" "igw" {
     vpc_id = aws_vpc.main.id
 
     tags = {
-        Name = "my-igw"
+        Name = "asie-my-igw"
     }
 }
 
@@ -50,7 +50,7 @@ resource "aws_route_table" "public" {
     }
 
     tags = {
-        Name = "public-rt"
+        Name = "asie-public-rt"
     }
 }
 
@@ -71,7 +71,7 @@ resource "aws_nat_gateway" "nat" {
     subnet_id       = aws_subnet.public.id
 
     tags = {
-        Name = "my-nat"
+        Name = "asie-my-nat"
     }
 }
 
@@ -85,7 +85,7 @@ resource "aws_route_table" "private" {
     }
     
     tags = {
-        Name = "private-rt"
+        Name = "asie-private-rt"
     }
 }
 
