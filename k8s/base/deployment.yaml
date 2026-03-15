@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asie-inference-deployment
+  labels:
+    app: asie-inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: asie-inference
+  template:
+    metadata:
+      labels:
+        app: asie-inference
+    spec:
+      containers:
+      - name: asie-inference-container
+        image: sharjeelansari6392/asie-inference:latest
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 8000
