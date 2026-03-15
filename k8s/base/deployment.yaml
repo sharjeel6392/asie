@@ -5,7 +5,7 @@ metadata:
   labels:
     app: asie-inference
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: asie-inference
@@ -17,12 +17,24 @@ spec:
       containers:
       - name: asie-inference-container
         image: sharjeelansari6392/asie-inference:latest
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
         ports:
         - containerPort: 8000
+        resources:
+          requests:
+            memory: "1.5Gi"
+            cpu: "1.5"
+          limits:
+            memory: "3Gi"
+            cpu: "3"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
