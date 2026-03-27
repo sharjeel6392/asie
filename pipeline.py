@@ -15,7 +15,7 @@ from src.utils.reproducibility import set_seed, capture_env
 from src.serving.config import Settings
 
 
-from constants import PARAMS_FILE, ARTIFACTS_DIR, ARTIFACTS_FILE, TOKENIZER_FILE
+from src.constants import PARAMS_FILE, ARTIFACTS_DIR, ARTIFACTS_FILE, TOKENIZER_FILE
 
 def hash_df(df: pd.DataFrame):
     return hashlib.md5(df.to_csv(index = False).encode()).hexdigest()

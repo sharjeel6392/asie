@@ -20,3 +20,4 @@ asie-plan.tfplan
 .terraform.lock.hcl
 terraform.tfstate
 terraform.tfstate.backup
+asie.egg-info/
