@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: asie-inference-service
+  namespace: asie-inference-namespace
 spec:
   type: NodePort
   selector:

@@ -2,6 +2,7 @@
 
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from src.logger import logging
+from src.serving.config import Settings
 
 class ModelLoader:
     '''
@@ -25,15 +26,15 @@ class ModelLoader:
         logging.info(f'Using device: {self.device}')
 
         try:
-            self.primary_tokenizer = AutoTokenizer.from_pretrained("./exported_model/primary/tokenizer")
-            self.primary_model = AutoModelForSequenceClassification.from_pretrained("./exported_model/primary/model")
+            self.primary_tokenizer = AutoTokenizer.from_pretrained(Settings.PRIMARY_TOKENIZER_PATH)
+            self.primary_model = AutoModelForSequenceClassification.from_pretrained(Settings.PRIMARY_MODEL_PATH)
         except Exception as e:
             logging.exception(f'Unexpected error occured while loading model artifacts: {e}')
             self.ready = False
             raise
         try:
-            self.shadow_tokenizer = AutoTokenizer.from_pretrained("./exported_model/shadow/tokenizer")
-            self.shadow_model = AutoModelForSequenceClassification.from_pretrained("./exported_model/shadow/model")
+            self.shadow_tokenizer = AutoTokenizer.from_pretrained(Settings.SHADOW_TOKENIZER_PATH)
+            self.shadow_model = AutoModelForSequenceClassification.from_pretrained(Settings.SHADOW_MODEL_PATH)
 
             self.shadow_model.to(self.device)
             self.shadow_model.eval()

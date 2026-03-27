@@ -4,6 +4,7 @@ metadata:
   name: asie-inference-deployment
   labels:
     app: asie-inference
+    namespace: asie-inference-namespace
 spec:
   replicas: 3
   selector:
@@ -17,6 +18,9 @@ spec:
       containers:
       - name: asie-inference-container
         image: sharjeelansari6392/asie-inference:latest
+        envFrom:
+        - configMapRef:
+            name: asie-inference-config
         ports:
         - containerPort: 8000
         resources:
