@@ -2,9 +2,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: asie-inference-deployment
+  namespace: asie-inference-namespace
   labels:
     app: asie-inference
-    namespace: asie-inference-namespace
 spec:
   replicas: 3
   selector:
@@ -17,7 +17,8 @@ spec:
     spec:
       containers:
       - name: asie-inference-container
-        image: sharjeelansari6392/asie-inference:latest
+        image: asie-inference-k8s:latest
+        imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
             name: asie-inference-config
