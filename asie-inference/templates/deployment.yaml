@@ -15,7 +15,7 @@ spec:
       labels:
         app: {{ .Release.Name }}
     spec:
-      # serviceAccountName: {{ .Values.serviceAccountName }}
+      serviceAccountName: {{ .Values.serviceAccountName }}
       containers:
       - name: "{{ .Release.Name }}-container"
         image: " {{ .Values.image.repository }}:{{ .Values.image.tag }}" #asie-inference-k8s:latest
