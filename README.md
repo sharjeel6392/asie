@@ -184,6 +184,104 @@ flowchart TD
     -   **Graceful Degradation**: Shadow model loading and execution are wrapped in `try/except` blocks; failures do not impact the primary service.
     -   **Structured Logging**: Detailed metrics on disagreement, score differences, and latencies for both primary and shadow models are logged to a dedicated SQLite database, enabling offline analysis and promotion readiness evaluation.
 
+### Kubernetes Orchestration on EKS
+
+ASIE has graduated from a single-EC2 deployment model to a fully orchestrated, production-grade inference platform on Amazon Elastic Kubernetes Service (<b>EKS</b>). This transition was carried out in two deliberate phases: first hardening the inference service for Kubernetes locally, then migrate the validated setup to a managed AWS cluster.
+
+#### Why Kubernetes?
+
+The transition from EC2 to Kubernetes was driven by the need for:
+
+- horizontal scalability under variable load
+- automated self-healing
+- zero-downtime deployments
+- declarative infrastructure
+
+Kubernetes proves these capabilities natively, making it the natural evolution for production-grade ML systems.
+
+#### Phase 1 — Kubernetes Hardening (Local)
+Before moving to EKS, the inference service was containerized and deployed on a local Kubernetes cluster to establish and validate production-readiness primitives in a low-cost environment.
+
+- **Resource Governance**: Explicitly CPU and memory requests and limits were introduced to guarantee scheduling capacity, control memory usage, and ensure stable multi-pod deployments. For example:
+
+```yaml
+resources:
+    requests:
+        memory: "1.5Gi"
+        cpu: "1.5"
+    limits:
+        memory: "3Gi"
+        cpu: "3"
+```
+
+- **Health Probes**: Readiness and liveness probes were wired to the `/health` endpoint. Readiness probes ensure traffic is only routed to fully initialized pods -- important given model load time at startup. Liveness probes trigger automatic container restarts on unrecoverable failures, removing the need for manual intervention.
+
+- **Scaling & Load Distribution**: The deployment was scaled to three replicas with Kubernetes service-level load balancing, and verified for uniform traffic distribution across pods.
+
+-**Self-Healing Validation**: Manual pod deletion confirmed automatic recreation without service disruption, validating Kubernetes' reconciliation loop under the intended configuration.
+
+#### Phase 2 — AWS EKS Deployment
+
+The hardened local setup was migrated to a managed EKS cluster, reusing the existing Terraform-provisioned VPC and integrating with AWS-native services.
+
+- **Infrastructure (Terraform + eksctl)**: The existing VPC was extended to support EKS — public subnets host the load balancer and NAT Gateway, private subnets host worker nodes, and the bastion host is retained for secure debugging access. The EKS cluster itself, including the managed control plane and node group, was provisioned using `eksctl`.
+
+- **Application Deployment (Helm)**: Kubernetes manifests were converted into a reusable Helm chart, enabling parameterized, version-controlled deployments and seamless upgrades across environments.
+
+- **Public Exposure**: The inference service is exposed via a `type: LoadBalancer` Kubernetes service, which automatically provisions on AWS Elastic Load Balancer to route external traffic to healthy pods in the private subnet.
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart TD
+    User[Client] --> ELB[AWS Load Balancer\nPublic Subnet]
+ 
+    subgraph VPC
+        subgraph PublicSubnet [Public Subnet]
+            ELB
+            Bastion[Bastion Host]
+            NATGW[NAT Gateway]
+        end
+ 
+        subgraph PrivateSubnet [Private Subnet]
+            subgraph EKSCluster [EKS Cluster]
+                ControlPlane[Control Plane\nAWS Managed]
+                subgraph WorkerNodes [Worker Nodes - EC2]
+                    Pod1[Inference Pod]
+                    Pod2[Inference Pod]
+                    HPA[HPA Controller]
+                end
+            end
+        end
+    end
+ 
+    ELB --> Pod1
+    ELB --> Pod2
+    HPA --> WorkerNodes
+    WorkerNodes -- "Route 0.0.0.0/0" --> NATGW
+    NATGW --> IGW[Internet Gateway]
+    Bastion --> WorkerNodes
+```
+
+- **Identity & Access (IRSA)**: Pod-level AWS permissions are managed through IAM Roles for Service Accounts (IRSA), avoiding the over-permissioning risk of node-level IAM roles. Each service account is bound to a scoped IAM role following the pattern `Pod → ServiceAccount → IAM Role → AWS`, enforcing least-privilege access per workload without static credentials. IRSA is configured with minimal permissions to demonstrate a least-privilege baseline. This ensures pods have identity without unnecessary access, aligning with production security best practices.
+
+- **Autoscaling & Resilience**: A CPU-based Horizontal Pod Autoscaler (HPA, threshold: 50%) dynamically adjusts replica count under load. PodDisruptionBudget enforce minimum availability during voluntary disruptions such as node drains or cluster upgrades, and pod anti-affinity rules spread replicas across nodes to prevent correlated failures.
+
+- **End-to-End Request Flow**:
+
+```
+Request lifecycle:
+    1. Client sends request to `predict`
+    2. AWS Load Balancer receives and routes to a healthy EKS worker node
+    3. Kubernetes forwards to a ready inference pod (validated by readiness probe)
+    4. Predictor processes input and runs model forward pass
+    5. Response returned to client
+
+Failure handline:
+    Pod crash     → Kubernetes restarts automatically (liveness probe)
+    Traffic spike → HPA scales replica count to meet demand
+    Deployment    → Rolling update replaces pods incrementally, zero downtime
+```
+
 ## 🛠 How to Use ASIE
 
 ### Running the Training Pipeline
@@ -252,6 +350,24 @@ After establishing the tunnel, the inference service will be accessible locally:
     }
     ```
 
+### Operational Tooling — `asie.sh`
+
+To consolidate the full infrastructure lifecycle into a single, repeatable interface, a unified shell script (`asie.sh`) was introduced. It encapsulates the entire provisioning and teardown sequence, eliminating manual multi-step coordination.
+
+```bash
+# Full cluster setup
+./asie.sh up
+```
+
+This performs, in order: Terraform provisioning (VPC, subnets, NAT Gateway, bastion), Docker image build and push to ECR, EKS cluster creation, OIDC provider setup for IRSA, `kubeconfig` update, IRSA service account creation, Helm deployment, and load balancer provisioning.
+
+```bash
+# Full teardown
+./asie.sh down
+```
+
+Teardown removes the helm release, Kubernetes namespace, EKS cluster, ECR repository, and all Terraform-managed infrastructure — ensuring zero residual AWS resources and no idle costs between development sessions.
+
 ## ✨ Benefits of ASIE
 
 ASIE provides a robust foundation for building and operating reliable ML systems, offering significant advantages for MLOps practitioners:
@@ -268,9 +384,8 @@ ASIE transforms the development of sentiment analysis models into a mature, soft
 
 ASIE is continuously evolving to incorporate advanced MLOps practices and enhance its production readiness. Current development efforts are focused on:
 
-1.  **Kubernetes (EKS) and Helm Deployment**: Transitioning to container orchestration with Amazon Elastic Kubernetes Service (EKS) for scalable and resilient deployments, managed via Helm charts for simplified application packaging and deployment.
-2.  **Drift Detection and Monitoring**: Implementing robust drift detection mechanisms using tools like Evidently AI to monitor model performance degradation over time. This includes calculating drift metrics and exploring synthetic slang injection for proactive testing.
-3.  **Alerts & Triggers with Prometheus and Grafana**: Establishing a comprehensive monitoring and alerting system. Drift detection will trigger webhooks, feeding data into Prometheus for time-series monitoring, visualized and alerted through Grafana.
-4.  **Automated Retraining (Closed Training Loop)**: Developing a fully automated retraining pipeline, orchestrated by Airflow DAGs, to create a closed-loop system for continuous model improvement. This involves automated data fetching, training, evaluation, and model registration.
-5.  **Production-Real Retraining**: Optimizing the retraining process for production environments, including leveraging GPU jobs, FP16 precision for faster training, and utilizing AWS spot instances for cost-efficiency.
-6.  **GitOps Deployment (Automated Model Rollout)**: Implementing GitOps principles with ArgoCD to automate model rollouts, enabling controlled rolling updates and streamlined model promotion across different environments.
+1.  **Drift Detection and Monitoring**: Implementing robust drift detection mechanisms using tools like Evidently AI to monitor model performance degradation over time. This includes calculating drift metrics and exploring synthetic slang injection for proactive testing.
+2.  **Alerts & Triggers with Prometheus and Grafana**: Establishing a comprehensive monitoring and alerting system. Drift detection will trigger webhooks, feeding data into Prometheus for time-series monitoring, visualized and alerted through Grafana.
+3.  **Automated Retraining (Closed Training Loop)**: Developing a fully automated retraining pipeline, orchestrated by Airflow DAGs, to create a closed-loop system for continuous model improvement. This involves automated data fetching, training, evaluation, and model registration.
+4.  **Production-Real Retraining**: Optimizing the retraining process for production environments, including leveraging GPU jobs, FP16 precision for faster training, and utilizing AWS spot instances for cost-efficiency.
+5.  **GitOps Deployment (Automated Model Rollout)**: Implementing GitOps principles with ArgoCD to automate model rollouts, enabling controlled rolling updates and streamlined model promotion across different environments.
