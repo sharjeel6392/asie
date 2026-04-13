@@ -1,10 +1,11 @@
 # Wire everything together
 module "network" {
     source              = "./modules/network"
-    vpc_cidr            = "10.0.0.0/16"
-    public_subnet_cidr  = "10.0.1.0/24"
-    private_subnet_cidr = "10.0.2.0/24"
-    az                  = "ap-south-1a"
+    
+    vpc_cidr            = var.vpc_cidr
+    public_subnet_cidr  = var.public_subnet_cidr
+    private_subnet_cidr = var.private_subnet_cidr
+    az                  = var.az
 }
 
 data "aws_ami" "amazon_linux_2023" {
@@ -24,8 +25,10 @@ data "aws_ami" "amazon_linux_2023" {
 
 module "ec2" {
     source              = "./modules/ec2"
+
     vpc_id              = module.network.vpc_id
     public_subnet_id    = module.network.public_subnet_id
     private_subnet_id   = module.network.private_subnet_id
     ami                 = data.aws_ami.amazon_linux_2023.id
+    my_ip               = var.my_ip
 }
