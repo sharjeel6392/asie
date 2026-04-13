@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: asie-inference-config
-  namespace: asie-inference-namespace
+  name: {{ .Release.Name }}
+  namespace: {{ .Values.namespace }}
 data:
   PRIMARY_MODEL_PATH: "/app/exported_model/primary/model"
   PRIMARY_TOKENIZER_PATH: "/app/exported_model/primary/tokenizer"

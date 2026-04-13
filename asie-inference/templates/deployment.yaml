@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      # serviceAccountName: {{ .Values.serviceAccountName }}
+      containers:
+      - name: "{{ .Release.Name }}-container"
+        image: " {{ .Values.image.repository }}:{{ .Values.image.tag }}" #asie-inference-k8s:latest
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: {{ .Values.configMapName }}
+        ports:
+        - containerPort: 8000
+        resources:
+          requests:
+            memory: {{ .Values.resources.requests.memory }}
+            cpu: {{ .Values.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.resources.limits.memory }}
+            cpu: {{ .Values.resources.limits.cpu}}
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.readinessProbe.Path}}
+            port: {{ .Values.readinessProbe.Port}}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.livenessProbe.Path }}
+            port: {{ .Values.livenessProbe.Port}}
+          initialDelaySeconds: 15
+          periodSeconds: 10

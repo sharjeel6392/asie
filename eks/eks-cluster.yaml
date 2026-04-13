@@ -1,0 +1,41 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: asie-cluster
+  region: ap-south-1
+
+vpc:
+  id: <YOUR_VPC_ID>
+
+  subnets:
+    public:
+      ap-south-1a:
+        id: <YOUR_PUBLIC_SUBNET_ID>
+
+    private:
+      ap-south-1a:
+        id: <YOUR_PRIVATE_SUBNET_ID>
+
+managedNodeGroups:
+  - name: asie-nodes
+    instanceType: t3.medium
+
+    desiredCapacity: 2
+    minSize: 1
+    maxSize: 3
+
+    privateNetworking: true
+
+    subnets:
+      - <YOUR_PRIVATE_SUBNET_ID>
+
+    ssh:
+      allow: true
+      publicKeyName: asie-key-pair
+
+    iam:
+      withAddonPolicies:
+        autoScaler: true
+        albIngress: true
+        cloudWatch: true
