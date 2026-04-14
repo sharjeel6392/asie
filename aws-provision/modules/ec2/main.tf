@@ -1,4 +1,9 @@
 
+resource "aws_key_pair" "asie_auth" {
+  key_name   = "asie-key-pair"
+  public_key = file("${path.root}/asie-key-pair.pem.pub")
+}
+
 # Bastion Security Group
 resource "aws_security_group" "bastion_sg" {
     name    = "asie-bastion-sg"
@@ -8,7 +13,7 @@ resource "aws_security_group" "bastion_sg" {
         from_port    = 22
         to_port      = 22
         protocol     = "tcp"
-        cidr_blocks  = [var.my_ip]
+        cidr_blocks  = var.my_ip
     }
 
     egress{
@@ -45,9 +50,9 @@ resource "aws_instance" "public" {
     instance_type               = "t2.micro"
     subnet_id                   = var.public_subnet_id
     associate_public_ip_address = true
-    key_name                    = "asie-key-pair"
+    key_name                    = aws_key_pair.asie_auth.key_name
 
-    vpc_security_group_ids = [aws_security_group.ec2_sg.id]
+    vpc_security_group_ids = [aws_security_group.bastion_sg.id]
 
     tags = {
         Name = "asie-bastion-ec2"
@@ -59,9 +64,9 @@ resource "aws_instance" "private" {
     ami             = var.ami
     instance_type   = "t3.medium"
     subnet_id       = var.private_subnet_id
-    key_name        = "asie-key-pair"
+    key_name        = aws_key_pair.asie_auth.key_name
 
-    vpc_security_group_ids = [aws_security_group.ec2_sg.id]
+    vpc_security_group_ids = [aws_security_group.private_sg.id]
 
     tags = {
         Name = "asie-private-ec2"

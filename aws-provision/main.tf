@@ -1,7 +1,7 @@
 # Wire everything together
 module "network" {
     source              = "./modules/network"
-    
+
     vpc_cidr            = var.vpc_cidr
     public_subnet_cidr  = var.public_subnet_cidr
     private_subnet_cidr = var.private_subnet_cidr
@@ -30,5 +30,5 @@ module "ec2" {
     public_subnet_id    = module.network.public_subnet_id
     private_subnet_id   = module.network.private_subnet_id
     ami                 = data.aws_ami.amazon_linux_2023.id
-    my_ip               = var.my_ip
+    my_ip               = local.my_ip
 }
