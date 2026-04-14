@@ -27,7 +27,6 @@ data "http" "my_ip" {
     url = "https://checkip.amazonaws.com/"
 }
 
-variable "my_ip" {
-    description = "Your IP address to allow access to the cluster"
-    default = ["${chomp(data.http.my_ip.response_body)}/32"]
+locals {
+    my_ip = ["${chomp(data.http.my_ip.response_body)}/32"]
 }
