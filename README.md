@@ -20,6 +20,7 @@ ASIE offers a suite of features engineered for MLOps maturity:
 - **Immutable Model Promotion**: A defined process to convert experimental runs into approved, versioned release artifacts for serving.
 - **Advanced Data Versioning**: Treating datasets as identified, versioned artifacts with explicit structure and lineage, independent of training code.
 - **Secure Cloud Deployment**: Implementing robust AWS infrastructure patterns including private subnets, bastion hosts, ECR, and IAM roles for credential-free operations.
+- **Kubernetes-Native Orchestration**: Running the inference service on Amazon EKS with Helm-managed deployments, CPU-based autoschaling (HPA), self-healing via liveness probes, and zero-downtime rolling updates.
 - **Structured Inference Logging**: Dedicated SQLite-based logging for online predictions, capturing detailed metadata, latency, and confidence scores.
 - **Safe Shadow Deployment**: Enabling silent execution of new model versions alongside primary models for performance comparison and risk mitigation without impacting live traffic.
 
@@ -30,18 +31,19 @@ ASIE is structured into distinct, interconnected layers that ensure modularity, 
 ### High-Level Flow
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart TD
     User_CLI[User / CLI] --> Orchestrator[Pipeline Orchestrator]
     Orchestrator --> DataLayer[Data Layer]
     Orchestrator --> PreprocessingLayer[Preprocessing Layer]
     Orchestrator --> ModelLayer[Model Layer]
     Orchestrator --> SystemsLayer[Systems Layer]
-
+ 
     DataLayer --> PreprocessingLayer
     PreprocessingLayer --> ModelLayer
     ModelLayer --> SystemsLayer
     SystemsLayer --> MLflow[MLflow Tracking Server]
-
+ 
     subgraph Training System
         Orchestrator
         DataLayer
@@ -49,10 +51,16 @@ flowchart TD
         ModelLayer
         SystemsLayer
     end
-
-    ServingSystem[Inference Service] --> Client[Client Applications]
-    ServingSystem --> SQLiteLogs[SQLite Inference Logs]
+ 
     SystemsLayer --> ServingSystem
+ 
+    subgraph EKS [EKS Cluster]
+        ServingSystem[Inference Service<br/>Helm-deployed Pods]
+    end
+ 
+    ELB[AWS Load Balancer] --> ServingSystem
+    ServingSystem --> Client[Client Applications]
+    ServingSystem --> SQLiteLogs[SQLite Inference Logs]
 ```
 
 ### Component Breakdown
@@ -282,6 +290,24 @@ Failure handline:
     Deployment    → Rolling update replaces pods incrementally, zero downtime
 ```
 
+## Operational Tooling — `asie.sh`
+
+To consolidate the full infrastructure lifecycle into a single, repeatable interface, a unified shell script (`asie.sh`) was introduced. It encapsulates the entire provisioning and teardown sequence, eliminating manual multi-step coordination.
+
+```bash
+# Full cluster setup
+./asie.sh up
+```
+
+This performs, in order:
+Terraform provisioning (VPC, subnets, NAT Gateway, bastion), Docker image build and push to ECR, EKS cluster creation, OIDC provider setup for IRSA, `kubeconfig` update, IRSA service account creation, Helm deployment, and load balancer provisioning.
+
+```bash
+# Full teardown
+./asie.sh down
+```
+Teeardown removes the Helm release, Kubernetes namespace, EKS cluster, ECR repository, and all Terraform-managed infrastructure — ensuring zero residual AWS resources and no idle costs between development sessions.
+
 ## 🛠 How to Use ASIE
 
 ### Running the Training Pipeline
@@ -307,6 +333,32 @@ This test verifies packaging, imports, environment consistency, and runtime corr
 Currently, model promotion is a manual process. After a training pipeline run, the user or administrator must manually update the `./model/model_registry.yaml` file with the details of the new primary and shadow models. This includes updating their respective run IDs, versions, hashes, and key metrics.
 
 This step ensures that the inference service loads the correct and desired model versions for serving.
+
+### Deploying on AWS (EKS)
+
+ASIE's cloud infrastructure lifecycle is managed through `asie.sh`, a unified script that handles the full squence of provisioning and teardown in a single command.
+
+**Provision and deploy**:
+```bash
+./asie.sh up
+```
+This runs the following steps in order:
+1. Terraform provisions the VPC, subnets, NAT Gateway, Internet Gateway, and bastion host.
+2. Docker image is built and pushed to ECR.
+3. EKS cluster is created via `eksctl`.
+4. OIDC provider is configured for IRSA.
+5. `kubeconfig` is updated for `kubectl` access.
+6. IRSA service account is craeted and bound to its IAM role.
+7. Helm deploys the inference service to the cluster
+8. AWS provisions the external load balancer.
+
+Once complete, the inference API is accessible via the load balancer URL.
+
+**Tear down all resources**:
+```bash
+./asie.sh down
+```
+This removes the Helm release, Kubernetes namespace, EKS cluster, ECR repository, and all Terraform-managed infrastructure, leaving zero residual AWS resources.
 
 ### Interacting with the Inference Service
 
@@ -349,24 +401,6 @@ After establishing the tunnel, the inference service will be accessible locally:
       "latency_ms": 12.5
     }
     ```
-
-### Operational Tooling — `asie.sh`
-
-To consolidate the full infrastructure lifecycle into a single, repeatable interface, a unified shell script (`asie.sh`) was introduced. It encapsulates the entire provisioning and teardown sequence, eliminating manual multi-step coordination.
-
-```bash
-# Full cluster setup
-./asie.sh up
-```
-
-This performs, in order: Terraform provisioning (VPC, subnets, NAT Gateway, bastion), Docker image build and push to ECR, EKS cluster creation, OIDC provider setup for IRSA, `kubeconfig` update, IRSA service account creation, Helm deployment, and load balancer provisioning.
-
-```bash
-# Full teardown
-./asie.sh down
-```
-
-Teardown removes the helm release, Kubernetes namespace, EKS cluster, ECR repository, and all Terraform-managed infrastructure — ensuring zero residual AWS resources and no idle costs between development sessions.
 
 ## ✨ Benefits of ASIE
 
