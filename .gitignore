@@ -14,10 +14,12 @@ src/UNKNOW*
 !model/model_registry.yaml
 /.env
 /exported_model/
-asie-key-pair.pem
+asie-key-pair.pem*
 asie-plan.tfplan
 .terraform
 .terraform.lock.hcl
 terraform.tfstate
 terraform.tfstate.backup
 asie.egg-info/
+eks/tmp-cluster.yaml
+.helmignore
