@@ -45,30 +45,59 @@ resource "aws_security_group" "private_sg" {
 }
 
 # Public EC2 (Bastion)
-resource "aws_instance" "public" {
+resource "aws_instance" "public-1a" {
     ami                         = var.ami
     instance_type               = "t2.micro"
-    subnet_id                   = var.public_subnet_id
+    subnet_id                   = var.public1_subnet_id
     associate_public_ip_address = true
     key_name                    = aws_key_pair.asie_auth.key_name
 
     vpc_security_group_ids = [aws_security_group.bastion_sg.id]
 
     tags = {
-        Name = "asie-bastion-ec2"
+        Name = "asie-bastion-1a-ec2"
     }
 }
 
 # Private EC2
-resource "aws_instance" "private" {
+resource "aws_instance" "private-1a" {
     ami             = var.ami
     instance_type   = "t3.medium"
-    subnet_id       = var.private_subnet_id
+    subnet_id       = var.private1_subnet_id
     key_name        = aws_key_pair.asie_auth.key_name
 
     vpc_security_group_ids = [aws_security_group.private_sg.id]
 
     tags = {
-        Name = "asie-private-ec2"
+        Name = "asie-private-1a-ec2"
+    }
+}
+
+# Public EC2 (Bastion)
+resource "aws_instance" "public-1b" {
+    ami                         = var.ami
+    instance_type               = "t2.micro"
+    subnet_id                   = var.public2_subnet_id
+    associate_public_ip_address = true
+    key_name                    = aws_key_pair.asie_auth.key_name
+
+    vpc_security_group_ids = [aws_security_group.bastion_sg.id]
+
+    tags = {
+        Name = "asie-bastion-1b-ec2"
+    }
+}
+
+# Private EC2
+resource "aws_instance" "private-1b" {
+    ami             = var.ami
+    instance_type   = "t3.medium"
+    subnet_id       = var.private2_subnet_id
+    key_name        = aws_key_pair.asie_auth.key_name
+
+    vpc_security_group_ids = [aws_security_group.private_sg.id]
+
+    tags = {
+        Name = "asie-private-1b-ec2"
     }
 }

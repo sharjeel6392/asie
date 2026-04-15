@@ -10,30 +10,56 @@ resource "aws_vpc" "main" {
     }
 }
 
-# Public Subnet
-resource "aws_subnet" "public" {
+# Public Subnet in ap-south-1a
+resource "aws_subnet" "public1" {
     vpc_id                  = aws_vpc.main.id
-    cidr_block              = var.public_subnet_cidr
-    availability_zone       = var.az
+    cidr_block              = var.public1_subnet_cidr
+    availability_zone       = var.az1
     map_public_ip_on_launch = true
 
     tags = {
-        Name = "asie-public-subnet"
+        Name = "asie-public1-subnet"
         "kubernetes.io/role/elb" = "1"
     }
 }
 
-# Private Subnet
-resource "aws_subnet" "private" {
+# Private Subnet in ap-south-1a
+resource "aws_subnet" "private1" {
     vpc_id              = aws_vpc.main.id
-    cidr_block          = var.private_subnet_cidr
-    availability_zone   = var.az
+    cidr_block          = var.private1_subnet_cidr
+    availability_zone   = var.az1
 
     tags = {
-        Name = "asie-private-subnet"
+        Name = "asie-private1-subnet"
         "kubernetes.io/role/internal-elb" = "1"
     }
 }
+
+# Public Subnet in ap-south-1b
+resource "aws_subnet" "public2" {
+    vpc_id                  = aws_vpc.main.id
+    cidr_block              = var.public2_subnet_cidr
+    availability_zone       = var.az2
+    map_public_ip_on_launch = true
+
+    tags = {
+        Name = "asie-public2-subnet"
+        "kubernetes.io/role/elb" = "1"
+    }
+}
+
+# Private Subnet in ap-south-1b
+resource "aws_subnet" "private2" {
+    vpc_id              = aws_vpc.main.id
+    cidr_block          = var.private2_subnet_cidr
+    availability_zone   = var.az2
+
+    tags = {
+        Name = "asie-private2-subnet"
+        "kubernetes.io/role/internal-elb" = "1"
+    }
+}
+
 
 # IGW
 resource "aws_internet_gateway" "igw" {
@@ -59,11 +85,15 @@ resource "aws_route_table" "public" {
 }
 
 # Associate it
-resource "aws_route_table_association" "public_assoc" {
-    subnet_id       = aws_subnet.public.id
+resource "aws_route_table_association" "public_1a_assoc" {
+    subnet_id       = aws_subnet.public1.id
     route_table_id  = aws_route_table.public.id
 }
 
+resource "aws_route_table_association" "public_1b_assoc" {
+    subnet_id       = aws_subnet.public2.id
+    route_table_id  = aws_route_table.public.id
+}
 
 # NAT + EIP
 resource "aws_eip" "nat_eip" {
@@ -72,7 +102,7 @@ resource "aws_eip" "nat_eip" {
 
 resource "aws_nat_gateway" "nat" {
     allocation_id   = aws_eip.nat_eip.id
-    subnet_id       = aws_subnet.public.id
+    subnet_id       = aws_subnet.public1.id
     
     depends_on      = [aws_internet_gateway.igw]
 
@@ -96,7 +126,12 @@ resource "aws_route_table" "private" {
 }
 
 # Associate it
-resource "aws_route_table_association" "private_assoc" {
-    subnet_id       = aws_subnet.private.id
+resource "aws_route_table_association" "private_1a_assoc" {
+    subnet_id       = aws_subnet.private1.id
+    route_table_id  = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "private_1b_assoc" {
+    subnet_id       = aws_subnet.private2.id
     route_table_id  = aws_route_table.private.id
 }
