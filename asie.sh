@@ -42,18 +42,23 @@ if [ "$1" == "up" ]; then
     docker push $ECR_URI:latest
 
     echo "Step 3: Creating EKS cluster with eksctl..."
-    # Replace placeholders in eks config with actual values, dynamically.
-    sed -e "s|<YOUR_VPC_ID>|$VPC_ID|g" \
-        -e "s|<YOUR_PUBLIC1_SUBNET_ID>|$PUBLIC1_SUBNET|g" \
-        -e "s|<YOUR_PRIVATE1_SUBNET_ID>|$PRIVATE1_SUBNET|g" \
-        -e "s|<YOUR_PUBLIC2_SUBNET_ID>|$PUBLIC2_SUBNET|g" \
-        -e "s|<YOUR_PRIVATE2_SUBNET_ID>|$PRIVATE2_SUBNET|g" \
-         eks/eks-cluster.yaml > eks/tmp-cluster.yaml
-    echo "Generated config:"
-    cat eks/tmp-cluster.yaml
-    echo "Generated EKS cluster config with actual VPC and subnet IDs. Creating cluster..."
+    # if the cluster already exists, skip creation
+    if eksctl get cluster --name $CLUSTER_NAME --region $REGION > /dev/null 2>&1; then
+        echo "EKS cluster already exists. Skipping creation."
+    else
+        # Replace placeholders in eks config with actual values, dynamically.
+        sed -e "s|<YOUR_VPC_ID>|$VPC_ID|g" \
+            -e "s|<YOUR_PUBLIC1_SUBNET_ID>|$PUBLIC1_SUBNET|g" \
+            -e "s|<YOUR_PRIVATE1_SUBNET_ID>|$PRIVATE1_SUBNET|g" \
+            -e "s|<YOUR_PUBLIC2_SUBNET_ID>|$PUBLIC2_SUBNET|g" \
+            -e "s|<YOUR_PRIVATE2_SUBNET_ID>|$PRIVATE2_SUBNET|g" \
+            eks/eks-cluster.yaml > eks/tmp-cluster.yaml
+        echo "Generated config:"
+        cat eks/tmp-cluster.yaml
+        echo "Generated EKS cluster config with actual VPC and subnet IDs. Creating cluster..."
 
-    eksctl create cluster -f eks/tmp-cluster.yaml
+        eksctl create cluster -f eks/tmp-cluster.yaml
+    fi
 
     echo "Step 4: Enable OIDC (For IRSA)..."
     eksctl utils associate-iam-oidc-provider \
@@ -82,7 +87,7 @@ if [ "$1" == "up" ]; then
         --set serviceAccount.name=asie-irsa-sa
 
     echo "Step 8: Waiting for LoadBalancer to be ready..."
-    kubectl get svc -n $NAMESPACE asie-inference-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' -w
+    kubectl get svc -n $NAMESPACE $RELEASE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' -w
     kubectl get svc -n $NAMESPACE
     echo "Setup complete! Your inference service is now accessible via the LoadBalancer endpoints."
 
