@@ -8,6 +8,8 @@ class Settings:
     MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
     MODEL_RUN_ID = os.getenv("MODEL_RUN_ID")
 
+    DRIFT_STORE = os.getenv("DRIFT_STORE", "sqlite")
+
     # Optional, with defaults
     MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "ASIE_Week1")
     INFERENCE_DEVICE = os.getenv("INFERENCE_DEVICE", "cpu")
