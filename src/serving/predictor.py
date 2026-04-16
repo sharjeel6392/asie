@@ -53,7 +53,12 @@ class Predictor:
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            outputs = model(**inputs)
+            outputs = model(**inputs, output_hidden_states = True)
+
+            hidden_states = outputs.hidden_states[-1]
+            embeddings = hidden_states.mean(dim = 1)
+            embeddings = embeddings.detach().cpu().numpy()
+
             logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
             probs = torch.softmax(logits, dim=-1)
         predictions = []
@@ -63,9 +68,10 @@ class Predictor:
             
             predictions.append(
                 {
-                    'text': texts,
+                    'text': texts[i],
                     'label': label_name,
-                    'score': float(score.item())
+                    'score': float(score.item()),
+                    'embedding': embeddings[i].tolist()
                 }
             )
 

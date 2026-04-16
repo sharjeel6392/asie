@@ -107,6 +107,7 @@ async def predict(req: PredictRequest):
 
     for i, text in enumerate(req.text):
         primary = primary_predictions[i]
+        embeddings = primary.get("embedding", None)
         shadow = (shadow_predictions[i] if shadow_predictions and i < len(shadow_predictions) else None)
 
         disagreement = None
@@ -121,6 +122,8 @@ async def predict(req: PredictRequest):
             "request_id": str(uuid.uuid4()),
             "timestamp": datetime.now().isoformat(),
             "input_data": json.dumps({'text': text}),
+            "embedding_json": json.dumps(embeddings) if embeddings else None,
+            "input_length": len(text),
             "true_label": None,
 
             "primary_model_name": "DistilBertForSequenceClassification",
