@@ -28,6 +28,7 @@ class ModelLoader:
         try:
             self.primary_tokenizer = AutoTokenizer.from_pretrained(Settings.PRIMARY_TOKENIZER_PATH)
             self.primary_model = AutoModelForSequenceClassification.from_pretrained(Settings.PRIMARY_MODEL_PATH)
+            self.primary_model.config.output_hidden_states = True
         except Exception as e:
             logging.exception(f'Unexpected error occured while loading model artifacts: {e}')
             self.ready = False
@@ -38,10 +39,12 @@ class ModelLoader:
 
             self.shadow_model.to(self.device)
             self.shadow_model.eval()
+            self.shadow_model.config.output_hidden_states = True
         except Exception as e:
             logging.warning(f'Shadow model could not be loaded. Loading failed with exception: {e}')
             self.shadow_model = None
             self.shadow_tokenizer = None
+        
 
         self.primary_model.to(self.device)
         self.primary_model.eval()

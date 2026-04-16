@@ -25,7 +25,11 @@ CREATE TABLE IF NOT EXISTS inference_logs (
     disagreement INTEGER,   -- 1 if predictions differ
     abs_diff REAL,          -- numeric difference
     request_source TEXT,    -- api, batch, test, etc.
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    -- EMBEDDINGS
+    embedding_json TEXT,    -- JSON serialized embeddings 
+    input_length INTEGER
 );
 
 -- For time-based queries
