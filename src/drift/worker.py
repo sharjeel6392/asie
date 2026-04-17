@@ -2,11 +2,7 @@ import argparse
 from datetime import datetime, timedelta
 
 from src.drift.storage.factory import get_drift_store
-from src.drift.features import (
-    build_feature_dataframe,
-    reduce_dimensionality,
-    parse_embeddings
-)
+from src.drift.features import build_feature_dataframe
 from src.drift.detector import compute_drift
 
 MIN_SAMPLES = 10
@@ -46,9 +42,6 @@ def run_drift_job(window_hours: int = 1):
     ref_logs = ref_logs.sample(min_size, random_state=42)
     cur_logs = cur_logs.sample(min_size, random_state=42)
 
-    # PCA
-    ref_embeddings = parse_embeddings(ref_logs)
-    pca = reduce_dimensionality(ref_embeddings)
 
     # feature transformation
     ref_features = build_feature_dataframe(ref_logs)
