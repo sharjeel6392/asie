@@ -7,8 +7,8 @@ from src.drift.detector import compute_drift
 storage = get_drift_store()
 
 # Reference Window (older data)
-ref_end = datetime.now() - timedelta(hours = 1)
-ref_start = ref_end - timedelta(hours = 2)
+ref_end = datetime.now() - timedelta(minutes = 10)
+ref_start = ref_end - timedelta(hours=48)
 
 # Current Window (recent data)
 cur_end = datetime.now()
@@ -16,13 +16,13 @@ cur_start = cur_end - timedelta(hours=1)
 
 # Fetch raw logs
 ref_logs = storage.fetch_reference(
-    ref_start.strftime('%Y-%m-%d %H:%M:%S'),
-    ref_end.strftime("%Y-%m-%d %H:%M:%S")
+    ref_start.isoformat(),
+    ref_end.isoformat()
 )
 
 cur_logs = storage.fetch_current(
-    cur_start.strftime('%Y-%m-%d %H:%M:%S'),
-    cur_end.strftime("%Y-%m-%d %H:%M:%S")
+    cur_start.isoformat(),
+    cur_end.isoformat() 
 )
 
 print(f"Reference logs: {ref_logs.shape}, \nCurrent logs: {cur_logs.shape}")
