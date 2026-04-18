@@ -22,6 +22,8 @@ ASIE offers a suite of features engineered for MLOps maturity:
 - **Secure Cloud Deployment**: Implementing robust AWS infrastructure patterns including private subnets, bastion hosts, ECR, and IAM roles for credential-free operations.
 - **Kubernetes-Native Orchestration**: Running the inference service on Amazon EKS with Helm-managed deployments, CPU-based autoschaling (HPA), self-healing via liveness probes, and zero-downtime rolling updates.
 - **Structured Inference Logging**: Dedicated SQLite-based logging for online predictions, capturing detailed metadata, latency, and confidence scores.
+- **Multi-Signal Drift Detection**: A time-windowed drift detection engine that monitors input distribution, output label distribution, confidence score shifts, and shadow model disagreement -- enabling proactive detection of model degradation before acciracy metrics are available.
+- **Structured Inference Logging**: Dedicated SQLite-based logging for online predictions, capturing detailed metadata, latency, and confidence scores.
 - **Safe Shadow Deployment**: Enabling silent execution of new model versions alongside primary models for performance comparison and risk mitigation without impacting live traffic.
 
 ## 🏗 System Architecture
@@ -61,6 +63,8 @@ flowchart TD
     ELB[AWS Load Balancer] --> ServingSystem
     ServingSystem --> Client[Client Applications]
     ServingSystem --> SQLiteLogs[SQLite Inference Logs]
+    SQLiteLogs --> DriftEngine[Drift Detection Engine]
+    DriftEngine --> ImpactAnalysis[Impact Analysis]
 ```
 
 ### Component Breakdown
@@ -144,6 +148,59 @@ flowchart LR
     -   **ModelLoader**: Manages model lifecycle, resolving MLflow artifact URIs, downloading, and loading models into memory.
     -   **Predictor**: Encapsulates all inference logic, including input normalization, tokenization, batch-aware inference, and post-processing.
     -   **InferenceLogger**: Provides observability by logging inference metadata, latency, and confidence scores to MLflow, ensuring traceability without affecting prediction responses.
+
+### Drift Detection & Model Monitoring
+Machine learning systems degrade silently. Unlike traditional software, failures don't surface as expections or error rates -- they appear as gradual shifts in input distributions and quietly drops in prediction quality. ASIE addresses this with a multi-signal drift detection engine that operates over time-windowed batches of logged inference data, providing proactive visibility into model behavior before accuracy degradation becomes critical.
+
+**Why Accuracy Alone Is Insufficient**
+
+In production, ground truth labels are typically delayed or unavailable, making real-time accuracy computation impractical. ASIE instead relies on proxy signals that are immediately observable: changes in input data distribution, shifts in the model's output behavior, declining confidence, and disagreement between the primary and shadow models. Together, these signals provide a leading indicator of degradation rather than a lagging one.
+
+**Drift Signals**
+
+The detection engine monitors *four* complementary signals, each targeting a different failure mode:
+
+-   **Input Feature / Text Distribution**: Tracks shifts in the statistical properties of incoming text -- capturing changes in vocabulary, sentence structure, or linguistic patterns that indicate the production data is diverging from training data. This is the earliest-stage signal, detecting drift before it has had any chance to affect model output.
+
+-   **Output Label Distribution**: Monitors the distribution of predicted sentiment labels over time. A model that was previously predicting a balanced mix of classes but has shifted towards near-uniform predictions is exhibiting a meaningful behavioural change, regardless of whether any individual prediction looks wrong.
+
+-   **Confidence Score Shifts**: Treats aggregate confidence as a leading degradation indicator. A well-calibrated model on familiar data produces high-confidence predictions; as inputs drift away from the training distribution, confidence tends to drop measurably before label accuracy does.
+
+-   **Shadow Model Disagreement Rate**: Leverages the existing shadow deployment infrastructure to measure the rate at which the primary and shadow models produce conflicting predictions on identical inputs. Rising disagreement is a direct signal of model instability and a strong prompt for closer investigation.
+
+**Architecture**
+
+The detection pipeline is built as a downstream layer on top of the existing inference logging infrastructure, consuming SQLite-logged inference records without touching the serving path.
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart LR
+    SQLiteLogs[SQLite Inference Logs] --> FeatureEngineering[Feature Engineering<br/>Pipeline]
+    FeatureEngineering --> DriftEngine[Drift Detection Engine<br/>Multi-Signal]
+    DriftEngine --> InputDrift[Input Distribution<br/>Signal]
+    DriftEngine --> OutputDrift[Output Label<br/>Distribution Signal]
+    DriftEngine --> ConfidenceDrift[Confidence Score<br/>Shift Signal]
+    DriftEngine --> ShadowDrift[Shadow Model<br/>Disagreement Signal]
+    InputDrift --> ImpactAnalysis[Impact Analysis]
+    OutputDrift --> ImpactAnalysis
+    ConfidenceDrift --> ImpactAnalysis
+    ShadowDrift --> ImpactAnalysis
+```
+
+-   **Feature Engineering Pipeline**: Pricesses raw inference log entries into structured feature representations suitable for distributional comparison -- extracting text embeddings, token statistics, and metadata fields.
+
+-   **Drift Detection Engine**: Applies statistical tests and distributional comparisons across each signal independently, operating over a configurable time window of logged requests.
+-   **Batch Worker**: Manually triggered at present, running on a specified timestamp range to analyse a defined window of production traffic.
+
+-   **Impact Analysis**: Aggregates signals from all four detectors to assess whether observed drift is correlated with meaningful changes in model behavior, distinguishing benign distributional noise from actionable degradation.
+
+**Synthetic Drift Injection**
+
+To validate detection sensitivity without waiting for real-world drift, the system supports synthetic drift injection -- introducing controlled perturbations (e.g., sland substitution, tone shifts) into inference inputs. This enables reproducible calibration of detection thresholds and confirms the engine responds corectly before it is needed in production.
+
+**Current State**
+
+Drift detection is currently triggered manually against a specified time window. Automated triggering, alerting via Prometheus and Grafana, and integrating with the retraining loop are the subject of the next development phase.
 
 ### Secure Cloud Deployment (AWS)
 
@@ -334,6 +391,24 @@ Currently, model promotion is a manual process. After a training pipeline run, t
 
 This step ensures that the inference service loads the correct and desired model versions for serving.
 
+### Running Drift Detection
+
+Drift detection is currently triggered manually against a specified time window of logged inference data. To run the detection engine:
+
+```bash
+python -m src.drift.worker --window_hours <hours>
+```
+
+This processes all inference log entries within the specified window and computes all four drift signals: input distribution, output label distribution, confidence score shifts, and shadow model disagreement rate. Results are written to the impact analysis output for review.
+
+To validate the detection engine using synthetic drift injection:
+
+```bash
+python -m src.drift.inject_drift
+```
+
+This injects controlled perturbation into a sample of inference inputs and confirms the engine responds with appropriate signal changes.
+
 ### Deploying on AWS (EKS)
 
 ASIE's cloud infrastructure lifecycle is managed through `asie.sh`, a unified script that handles the full squence of provisioning and teardown in a single command.
@@ -409,7 +484,7 @@ ASIE provides a robust foundation for building and operating reliable ML systems
 -   **Enhanced Reproducibility**: Every aspect of the ML lifecycle, from data to model, is versioned and traceable.
 -   **Increased Reliability**: Deterministic model loading, immutable artifacts, and isolated serving environments minimize production risks.
 -   **Improved Security**: Credential-free AWS deployment, network isolation, and secure access patterns protect sensitive data and models.
--   **Streamlined Operations**: Automated experiment tracking, structured inference logging, and safe shadow deployments simplify monitoring and model evaluation.
+-   **Streamlined Operations**: `asie.sh` reduces the entire infrastructure lifecycle to a single command. Automated experiment tracking, structured inference logging, multi-signal drift detection, and safe shadow deployment shift the operational posture from reactive debugging to proactive monitoring.
 -   **Scalability & Maintainability**: Modular architecture and clear separation of concerns facilitate easier development, testing, and scaling of ML capabilities.
 
 ASIE transforms the development of sentiment analysis models into a mature, software-engineered process, ready for demanding production environments.
@@ -418,8 +493,7 @@ ASIE transforms the development of sentiment analysis models into a mature, soft
 
 ASIE is continuously evolving to incorporate advanced MLOps practices and enhance its production readiness. Current development efforts are focused on:
 
-1.  **Drift Detection and Monitoring**: Implementing robust drift detection mechanisms using tools like Evidently AI to monitor model performance degradation over time. This includes calculating drift metrics and exploring synthetic slang injection for proactive testing.
-2.  **Alerts & Triggers with Prometheus and Grafana**: Establishing a comprehensive monitoring and alerting system. Drift detection will trigger webhooks, feeding data into Prometheus for time-series monitoring, visualized and alerted through Grafana.
-3.  **Automated Retraining (Closed Training Loop)**: Developing a fully automated retraining pipeline, orchestrated by Airflow DAGs, to create a closed-loop system for continuous model improvement. This involves automated data fetching, training, evaluation, and model registration.
-4.  **Production-Real Retraining**: Optimizing the retraining process for production environments, including leveraging GPU jobs, FP16 precision for faster training, and utilizing AWS spot instances for cost-efficiency.
-5.  **GitOps Deployment (Automated Model Rollout)**: Implementing GitOps principles with ArgoCD to automate model rollouts, enabling controlled rolling updates and streamlined model promotion across different environments.
+1.  **Alerts & Triggers with Prometheus and Grafana**: Establishing a comprehensive monitoring and alerting system. Drift detection will trigger webhooks, feeding data into Prometheus for time-series monitoring, visualized and alerted through Grafana.
+2.  **Automated Retraining (Closed Training Loop)**: Developing a fully automated retraining pipeline, orchestrated by Airflow DAGs, to create a closed-loop system for continuous model improvement. This involves automated data fetching, training, evaluation, and model registration.
+3.  **Production-Real Retraining**: Optimizing the retraining process for production environments, including leveraging GPU jobs, FP16 precision for faster training, and utilizing AWS spot instances for cost-efficiency.
+4.  **GitOps Deployment (Automated Model Rollout)**: Implementing GitOps principles with ArgoCD to automate model rollouts, enabling controlled rolling updates and streamlined model promotion across different environments.
