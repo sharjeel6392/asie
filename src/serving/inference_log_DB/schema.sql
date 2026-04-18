@@ -13,12 +13,14 @@ CREATE TABLE IF NOT EXISTS inference_logs (
     primary_model_name TEXT NOT NULL,
     primary_model_version TEXT NOT NULL,
     primary_prediction TEXT NOT NULL,
+    primary_confidence REAL NOT NULL,
     primary_latency_ms REAL NOT NULL,
 
     -- SHADOW MODEL (nullable)
     shadow_model_name TEXT,
     shadow_model_version TEXT,
     shadow_predictions TEXT,
+    shadow_confidence REAL,
     shadow_latency_ms REAL,
 
     -- METADATA

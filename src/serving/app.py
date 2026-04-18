@@ -129,11 +129,13 @@ async def predict(req: PredictRequest):
             "primary_model_name": "DistilBertForSequenceClassification",
             "primary_model_version": "v_01",
             "primary_prediction": primary['label'],
+            "primary_confidence": primary['score'],
             "primary_latency_ms": primary_per_sample_latency,
 
             "shadow_model_name": "DistilBertForSequenceClassification" if shadow_enabled else None,
             "shadow_model_version": 'v_02' if shadow_enabled else None,
             "shadow_predictions": shadow['label'] if shadow else None,
+            "shadow_confidence": shadow['score'] if shadow else None,
             "shadow_latency_ms": shadow_per_sample_latency,
 
             "disagreement": disagreement,
