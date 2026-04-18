@@ -3,8 +3,7 @@ from datetime import datetime, timedelta
 
 from src.drift.storage.factory import get_drift_store
 from src.drift.features import build_feature_dataframe
-from src.drift.detector import compute_drift
-
+from src.drift.detector import compute_drift, compute_confidence_shift, compute_disagreement
 MIN_SAMPLES = 10
 
 def compute_time_windows(window_hours: int):
@@ -53,6 +52,8 @@ def run_drift_job(window_hours: int = 1):
 
     # compute drift
     result = compute_drift(ref_features, cur_features, ref_preds, cur_preds)
+    ref_dis, cur_dis = compute_disagreement(ref_logs, cur_logs)
+    ref_conf, cur_conf = compute_confidence_shift(ref_logs, cur_logs)
 
     # output
     print("\n=== DRIFT RESULT ===")
@@ -62,6 +63,15 @@ def run_drift_job(window_hours: int = 1):
         "feature_drift": result['feature_drift'],
         "prediction_drift": result['prediction_drift'],
         "final_drift_score": result['final_drift_score']
+    })
+
+    print("\n=== IMPACT ANALYIS ===")
+    print({
+        "ref_disagreement": ref_dis,
+        "cur_disagreement": cur_dis,
+        "ref_confidence": ref_conf,
+        "cur_confidence": cur_conf,
+        "confidence_drop": ref_conf - cur_conf
     })
 
 def parse_args():
