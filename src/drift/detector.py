@@ -56,3 +56,15 @@ def compute_drift(reference_df, current_df, ref_preds, cur_preds) -> dict:
         'final_drift_score': final_score,
         'per_feature_drift': feature_drift
     }
+
+def compute_disagreement(ref_logs, cur_logs):
+    ref_dis = (ref_logs["primary_prediction"] != ref_logs["shadow_predictions"]).mean()
+    cur_dis = (cur_logs["primary_prediction"] != cur_logs["shadow_predictions"]).mean()
+
+    return ref_dis, cur_dis
+
+def compute_confidence_shift(ref_logs, cur_logs):
+    ref_conf = ref_logs["primary_confidence"].mean()
+    cur_conf = cur_logs["primary_confidence"].mean()
+
+    return ref_conf, cur_conf

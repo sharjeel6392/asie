@@ -12,6 +12,7 @@ from src.logger import logging
 from src.serving.config import Settings
 from src.serving.inference_log_DB.database import init_db
 from src.serving.inference_log_DB.repository import log_inference
+from src.drift.worker import run_drift_job
 
 
 app = FastAPI(title= 'ASIE Serving API')
@@ -150,3 +151,8 @@ async def predict(req: PredictRequest):
         latency_ms= primary_pred['latency_ms'],
         model_version= 'v0'
     )
+
+@app.get("/drift")
+def get_drift():
+    result = run_drift_job(window_hours=1)
+    return result
