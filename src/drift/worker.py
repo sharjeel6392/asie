@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from src.drift.storage.factory import get_drift_store
 from src.drift.features import build_feature_dataframe
 from src.drift.detector import compute_drift, compute_confidence_shift, compute_disagreement
+from src.drift.storage.drift_metrics_repository import insert_drift_metric
 MIN_SAMPLES = 10
 
 def compute_time_windows(window_hours: int):
@@ -17,7 +18,7 @@ def compute_time_windows(window_hours: int):
 
     return ref_start, ref_end, cur_start, cur_end
 
-def run_drift_job(window_hours: int = 1):
+def run_drift_job(window_hours: int = 1) -> dict:
     store = get_drift_store()
 
     # define windows
@@ -34,7 +35,8 @@ def run_drift_job(window_hours: int = 1):
     # guard
     if len(ref_logs) < MIN_SAMPLES or len(cur_logs) < MIN_SAMPLES:
         print('[WARN] Insufficient data for drift computation')
-        return
+        insert_drift_metric(0.0)
+        return {}
     
     # normalize window size
     min_size = min(len(ref_logs), len(cur_logs))
@@ -54,7 +56,13 @@ def run_drift_job(window_hours: int = 1):
     result = compute_drift(ref_features, cur_features, ref_preds, cur_preds)
     ref_dis, cur_dis = compute_disagreement(ref_logs, cur_logs)
     ref_conf, cur_conf = compute_confidence_shift(ref_logs, cur_logs)
+    
+    final_score = result["final_drift_score"]
+    print(f'[DEBUG] Writing drift score: {final_score} to drift.db')
+    insert_drift_metric(final_score)
+    
 
+    
     # output
     print("\n=== DRIFT RESULT ===")
     print({
@@ -73,6 +81,7 @@ def run_drift_job(window_hours: int = 1):
         "cur_confidence": cur_conf,
         "confidence_drop": ref_conf - cur_conf
     })
+    return result
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run druft detection job")
@@ -86,4 +95,6 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    run_drift_job(window_hours=args.window_hours)
+    res = run_drift_job(window_hours=args.window_hours)
+    if res is None:
+        print('Something is not right!')
