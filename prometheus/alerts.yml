@@ -1,0 +1,21 @@
+groups:
+  - name: drift_alerts
+    rules:
+
+      - alert: DriftWarning
+        expr: asie_data_drift_score > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Moderate data drift detected"
+          description: "Drift score has been above 0.5 for more than 5 minutes."
+        
+      - alert: DriftCritical
+        expr: asie_data_drift_score > 0.75
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High data drift spike detected"
+          description: "Drift score exceeded 0.75 for over 1 minute."
