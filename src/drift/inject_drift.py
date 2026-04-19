@@ -86,7 +86,4 @@ if __name__ == '__main__':
         "The firm has a stable earnings trajectory",
         "The industry outlook remains favorable"
     ]
-    for text in texts:
-        _ = send_request(text)
-    time.sleep(60)
     simulate_drift(texts)

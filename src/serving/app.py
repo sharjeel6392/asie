@@ -1,9 +1,10 @@
 # The Control Plane
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 import uuid
 from datetime import datetime
 import json
+from prometheus_client import Gauge, generate_latest
 
 from src.serving.schema import PredictRequest, PredictResponse
 from src.serving.model_loader import ModelLoader
@@ -13,11 +14,17 @@ from src.serving.config import Settings
 from src.serving.inference_log_DB.database import init_db
 from src.serving.inference_log_DB.repository import log_inference
 from src.drift.worker import run_drift_job
+from src.drift.storage.drift_metrics_repository import get_latest_drift_metric
 
 
 app = FastAPI(title= 'ASIE Serving API')
 loader = ModelLoader(device="cpu")
 predictor = None
+
+drift_gauge = Gauge(
+    "asie_data_drift_score",
+    "Aggregated drift score (feature + prediction drift)"
+)
 
 @app.on_event('startup')
 def startup_event():
@@ -154,5 +161,12 @@ async def predict(req: PredictRequest):
 
 @app.get("/drift")
 def get_drift():
-    result = run_drift_job(window_hours=1)
+    result = run_drift_job(window_hours=24)
     return result
+
+@app.get("/metrics")
+def metrics():
+    drift_value = get_latest_drift_metric()
+    drift_gauge.set(drift_value)
+
+    return Response(generate_latest(), media_type="text/plain")
