@@ -15,6 +15,7 @@ from src.serving.inference_log_DB.database import init_db
 from src.serving.inference_log_DB.repository import log_inference
 from src.drift.worker import run_drift_job
 from src.drift.storage.drift_metrics_repository import get_latest_drift_metric
+from src.events.transformer import transform_alert_to_event
 
 
 app = FastAPI(title= 'ASIE Serving API')
@@ -182,3 +183,18 @@ async def webhook_receiver(request: Request):
     print(payload)
 
     return {"status": "received"}
+
+@app.post("/webhook/drift")
+async def drift_webhook(request: Request):
+    payload = await request.json()
+
+    events = []
+
+    for alert in payload.get("alerts", []):
+        event = transform_alert_to_event(alert, payload.get("status"))
+        events.append(event)
+
+        print("DRIFT EVENT")
+        print(event)
+
+    return {"events_processed": len(events)}
