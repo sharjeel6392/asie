@@ -1,6 +1,6 @@
 # The Control Plane
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response, Request
 import uuid
 from datetime import datetime
 import json
@@ -170,3 +170,15 @@ def metrics():
     drift_gauge.set(drift_value)
 
     return Response(generate_latest(), media_type="text/plain")
+
+@app.post("/webhook")
+async def webhook_receiver(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {"error": "invalid json"}
+
+    print("ALERT RECEIVED")
+    print(payload)
+
+    return {"status": "received"}
