@@ -5,4 +5,4 @@ receivers:
   - name: "webhook-receiver"
     webhook_configs:
       - send_resolved: true
-        url: "http://localhost:8000/webhook"
+        url: "http://localhost:8000/webhook/drift"
