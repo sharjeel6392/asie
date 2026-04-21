@@ -12,6 +12,7 @@ from src.serving.predictor import Predictor
 from src.logger import logging
 from src.serving.config import Settings
 from src.serving.inference_log_DB.database import init_db
+from src.drift.storage.drift_metrics_repository import init_drift_db as storage_db
 from src.serving.inference_log_DB.repository import log_inference
 from src.drift.worker import run_drift_job
 from src.drift.storage.drift_metrics_repository import get_latest_drift_metric
@@ -21,6 +22,7 @@ from src.events.transformer import transform_alert_to_event
 app = FastAPI(title= 'ASIE Serving API')
 loader = ModelLoader(device="cpu")
 predictor = None
+storage_db()
 
 drift_gauge = Gauge(
     "asie_data_drift_score",
