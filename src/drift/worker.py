@@ -7,7 +7,7 @@ from src.drift.detector import compute_drift, compute_confidence_shift, compute_
 from src.drift.storage.drift_metrics_repository import insert_drift_metric
 MIN_SAMPLES = 10
 
-def compute_time_windows(window_hours: int):
+def compute_time_windows(window_hours: float):
     now = datetime.now()
 
     cur_end = now
@@ -18,7 +18,7 @@ def compute_time_windows(window_hours: int):
 
     return ref_start, ref_end, cur_start, cur_end
 
-def run_drift_job(window_hours: int = 1) -> dict:
+def run_drift_job(window_hours: float = 1.0) -> dict:
     store = get_drift_store()
 
     # define windows
