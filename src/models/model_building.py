@@ -1,55 +1,26 @@
-import os
-import torch
-from datasets import Dataset
-from transformers import AutoModelForSequenceClassification, Trainer, TrainingArguments
-
+from src.models.factory import get_model
 from src.logger import logging
-from src.models.model_eval import compute_metrics
-from src.utils.load_data import load_data
-from src.constants import PREPROCESSED_DATA_DIR, TRAIN_DATA_FILE, VAL_DATA_FILE, MODEL_DIR, MODEL_FILE
 
-def train_model(cfg: dict) -> tuple[str, dict[str, float]]:
+def train_model(cfg: dict) -> tuple[str, dict]:
+    """
+    Wrapper around model abstraction layer
+    to train a model and return its type and evaluation metrics
+    Args:
+        cfg (dict): Configuration dictionary for model training
+
+    Returns:
+        tuple[str, dict]: Path to the saved model and evaluation metrics
+    """
     try:
-        logging.debug("Initiating model building")
-        train_ds = Dataset.from_pandas(load_data(os.path.join(PREPROCESSED_DATA_DIR, TRAIN_DATA_FILE)))
-        if train_ds is None:
-            logging.error('Loaded test dataframe is None. Aborting preprocessing.')
-            raise ValueError('Loaded train dataframe is None.')
-        
-        val_ds = Dataset.from_pandas(load_data(os.path.join(PREPROCESSED_DATA_DIR, VAL_DATA_FILE)))
-        if val_ds is None:
-            logging.error('Loaded validation dataframe is None. Aborting preprocessing.')
-            raise ValueError('Loaded validation dataframe is None.')
+        logging.debug("Initializing model building")
 
-        model = AutoModelForSequenceClassification.from_pretrained(cfg['model_name'], num_labels = 3)
-        device_is_gpu = torch.cuda.is_available()
-        logging.debug("Training started")
-        args = TrainingArguments(
-            output_dir = './runs',
-            fp16= device_is_gpu,
-            per_device_train_batch_size= int(cfg['batch_size']),
-            num_train_epochs = int(cfg['epochs']),
-            learning_rate= float(cfg['lr']),
-            eval_strategy='epoch',
-            logging_steps=50,
-            report_to='none',
-        )
+        model = get_model(cfg)
 
-        trainer = Trainer(
-            model = model,
-            args = args,
-            train_dataset= train_ds,
-            eval_dataset =val_ds,
-            compute_metrics= compute_metrics,
-        )
-        trainer.train()
-        logging.debug("Training completed")
-        metrics = trainer.evaluate()
-        save_path = os.path.join(MODEL_DIR, MODEL_FILE)
-        os.makedirs(save_path, exist_ok = True)
-        trainer.save_model(save_path)
-        logging.debug(f"Model saved at {save_path}")
+        metrics = model.train(cfg)
+        save_path = model.save()
+
         return save_path, metrics
+    
     except Exception as e:
-        logging.error(f'Unexpected error occured during model training: {e}')
+        logging.error(f'Unexpected error during model training: {e}')
         raise
