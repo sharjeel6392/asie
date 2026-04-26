@@ -22,7 +22,8 @@ ASIE offers a suite of features engineered for MLOps maturity:
 - **Secure Cloud Deployment**: Implementing robust AWS infrastructure patterns including private subnets, bastion hosts, ECR, and IAM roles for credential-free operations.
 - **Kubernetes-Native Orchestration**: Running the inference service on Amazon EKS with Helm-managed deployments, CPU-based autoschaling (HPA), self-healing via liveness probes, and zero-downtime rolling updates.
 - **Structured Inference Logging**: Dedicated SQLite-based logging for online predictions, capturing detailed metadata, latency, and confidence scores.
-- **Multi-Signal Drift Detection**: A time-windowed drift detection engine that monitors input distribution, output label distribution, confidence score shifts, and shadow model disagreement -- enabling proactive detection of model degradation before acciracy metrics are available.
+- **Multi-Signal Drift Detection**: A time-windowed drift detection engine that monitors input distribution, output label distribution, confidence score shifts, and shadow model disagreement —  enabling proactive detection of model degradation before acciracy metrics are available.
+- **Event-Driven Alerting Pipeline**: Drift metrics are exposed to Prometheus, evaluated against defined alert thresholds, routed through Alertmanager, and delivered to a structured webhook endpoint — transforming passive drift signal into actionable, extensible system events.
 - **Structured Inference Logging**: Dedicated SQLite-based logging for online predictions, capturing detailed metadata, latency, and confidence scores.
 - **Safe Shadow Deployment**: Enabling silent execution of new model versions alongside primary models for performance comparison and risk mitigation without impacting live traffic.
 
@@ -35,36 +36,45 @@ ASIE is structured into distinct, interconnected layers that ensure modularity, 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
 flowchart TD
-    User_CLI[User / CLI] --> Orchestrator[Pipeline Orchestrator]
-    Orchestrator --> DataLayer[Data Layer]
-    Orchestrator --> PreprocessingLayer[Preprocessing Layer]
-    Orchestrator --> ModelLayer[Model Layer]
-    Orchestrator --> SystemsLayer[Systems Layer]
- 
-    DataLayer --> PreprocessingLayer
-    PreprocessingLayer --> ModelLayer
-    ModelLayer --> SystemsLayer
-    SystemsLayer --> MLflow[MLflow Tracking Server]
- 
-    subgraph Training System
-        Orchestrator
-        DataLayer
-        PreprocessingLayer
-        ModelLayer
-        SystemsLayer
+    User_CLI[User / CLI] --> Orchestrator
+
+    subgraph Training_System [Training System]
+        Orchestrator[Pipeline Orchestrator]
+        DataLayer[Data Layer]
+        PreprocessingLayer[Preprocessing Layer]
+        ModelLayer[Model Layer]
+        SystemsLayer[Systems Layer]
+        
+        %% Defining the linear flow
+        DataLayer --> PreprocessingLayer --> ModelLayer --> SystemsLayer
     end
- 
+
+    %% Control lines from Orchestrator
+    Orchestrator -.-> DataLayer
+    Orchestrator -.-> PreprocessingLayer
+    Orchestrator -.-> ModelLayer
+    
+    SystemsLayer --> MLflow[MLflow Tracking Server]
     SystemsLayer --> ServingSystem
- 
+
     subgraph EKS [EKS Cluster]
         ServingSystem[Inference Service<br/>Helm-deployed Pods]
     end
- 
+
     ELB[AWS Load Balancer] --> ServingSystem
     ServingSystem --> Client[Client Applications]
     ServingSystem --> SQLiteLogs[SQLite Inference Logs]
+    
     SQLiteLogs --> DriftEngine[Drift Detection Engine]
     DriftEngine --> ImpactAnalysis[Impact Analysis]
+    DriftEngine --> DriftDB[(drift.db)]
+    
+    %% Fixed syntax here
+    DriftDB --> MetricsEndpoint[/ "/metrics endpoint" /]
+    MetricsEndpoint --> Prometheus[Prometheus]
+    Prometheus --> Alertmanager[Alertmanager]
+    Alertmanager --> Webhook[Webhook /webhook/drift]
+    Webhook --> EventLog[Structured Event Log]
 ```
 
 ### Component Breakdown
@@ -150,7 +160,7 @@ flowchart LR
     -   **InferenceLogger**: Provides observability by logging inference metadata, latency, and confidence scores to MLflow, ensuring traceability without affecting prediction responses.
 
 ### Drift Detection & Model Monitoring
-Machine learning systems degrade silently. Unlike traditional software, failures don't surface as expections or error rates -- they appear as gradual shifts in input distributions and quietly drops in prediction quality. ASIE addresses this with a multi-signal drift detection engine that operates over time-windowed batches of logged inference data, providing proactive visibility into model behavior before accuracy degradation becomes critical.
+Machine learning systems degrade silently. Unlike traditional software, failures don't surface as expections or error rates — they appear as gradual shifts in input distributions and quietly drops in prediction quality. ASIE addresses this with a multi-signal drift detection engine that operates over time-windowed batches of logged inference data, providing proactive visibility into model behavior before accuracy degradation becomes critical.
 
 **Why Accuracy Alone Is Insufficient**
 
@@ -160,7 +170,7 @@ In production, ground truth labels are typically delayed or unavailable, making 
 
 The detection engine monitors *four* complementary signals, each targeting a different failure mode:
 
--   **Input Feature / Text Distribution**: Tracks shifts in the statistical properties of incoming text -- capturing changes in vocabulary, sentence structure, or linguistic patterns that indicate the production data is diverging from training data. This is the earliest-stage signal, detecting drift before it has had any chance to affect model output.
+-   **Input Feature / Text Distribution**: Tracks shifts in the statistical properties of incoming text — capturing changes in vocabulary, sentence structure, or linguistic patterns that indicate the production data is diverging from training data. This is the earliest-stage signal, detecting drift before it has had any chance to affect model output.
 
 -   **Output Label Distribution**: Monitors the distribution of predicted sentiment labels over time. A model that was previously predicting a balanced mix of classes but has shifted towards near-uniform predictions is exhibiting a meaningful behavioural change, regardless of whether any individual prediction looks wrong.
 
@@ -187,7 +197,7 @@ flowchart LR
     ShadowDrift --> ImpactAnalysis
 ```
 
--   **Feature Engineering Pipeline**: Pricesses raw inference log entries into structured feature representations suitable for distributional comparison -- extracting text embeddings, token statistics, and metadata fields.
+-   **Feature Engineering Pipeline**: Pricesses raw inference log entries into structured feature representations suitable for distributional comparison — extracting text embeddings, token statistics, and metadata fields.
 
 -   **Drift Detection Engine**: Applies statistical tests and distributional comparisons across each signal independently, operating over a configurable time window of logged requests.
 -   **Batch Worker**: Manually triggered at present, running on a specified timestamp range to analyse a defined window of production traffic.
@@ -196,11 +206,96 @@ flowchart LR
 
 **Synthetic Drift Injection**
 
-To validate detection sensitivity without waiting for real-world drift, the system supports synthetic drift injection -- introducing controlled perturbations (e.g., sland substitution, tone shifts) into inference inputs. This enables reproducible calibration of detection thresholds and confirms the engine responds corectly before it is needed in production.
+To validate detection sensitivity without waiting for real-world drift, the system supports synthetic drift injection — introducing controlled perturbations (e.g., sland substitution, tone shifts) into inference inputs. This enables reproducible calibration of detection thresholds and confirms the engine responds corectly before it is needed in production.
 
 **Current State**
 
 Drift detection is currently triggered manually against a specified time window. Automated triggering, alerting via Prometheus and Grafana, and integrating with the retraining loop are the subject of the next development phase.
+
+### Alerts & Triggers
+
+With drift signals being computed and persisted, the next layer makes drift detection <i>actionable</i>. Rather than simply logging a score, ASIE now exposes drift as a machine-readable metric, evaluates it continuously against defined thresholds, and routes alert events through a structured pipeline — forming the foundation for automatic retraining and incidenct response.
+
+The full event pipeline is:
+```
+Drift Job → SQLite → /metrics → Prometheus → Alert Rules → Alertmanager → /webhook/drift → Structured Event
+```
+
+**Metric Exposure (`/metrics`)**
+
+The drift computation is intentionally decoupled from metric serving. The drift job runs separately and writes its result to a dedicated `drift.db` SQLite database. The `/metrics` endpoint simply reads the latest persisted value and serves it in Prometheus-compatible plain text format — ensuring Prometheus scrapes never trigger expensive recomputation.
+
+A single Gauge metric is exposed:
+
+| Field | Value |
+| --- | --- |
+| Name | `asie_data_drift_score` |
+| Type | Gauge |
+| Source | `result['final_drift_score']` from `compute_drift()` |
+| Default | `0.0` if insufficient data |
+
+This stores `asie_data_drift_score` as a time series, making the full history of drift behavior queryable and graphable in the Prometheus UI.
+
+**Alert Rules**
+
+Two alert levels are defined, caliberated against observed drift behavior (baseline ~0.16, gradual drift ~0.45-0.5, spoles ~0.8+):
+
+```yaml
+# DriftWarning — sustained gradual drift
+expr: asie_data_drift_score > 0.5
+for: 5m
+
+# DriftCritical — sudden spike
+expr: asie_data_drift_score > 0.75
+for: 1m
+```
+The `for:` duration is critical: it prevents short-lived fluctuations from triggering false positives. Prometheues evaluates alerts through three states — `inactive → pending → firing` — only promoting to `firing` once the condition has been sustained for the configured duration.
+
+**Alertmanager Routing**
+
+Alertmanager receives firing alerts from Prometheus and routes them to the webhook receiver:
+```yaml
+route:
+    receiver: "webhook-receiver"
+
+receivers:
+    - name: "webhook-receiver"
+      webhook_configs:
+        - url: "http://localhost:8000/webhook/drift"
+          send_resolved: true
+```
+
+`send_resolved: true` ensures the downstream webhook is also notified when a drift condition clears, enabling the event log to capture full alert lifecycle transitions.
+
+**Webhook & Structured Event Schema**
+
+A `POST /webhook/drift` endpoint receives Alertmanager payloads and transforms each raw alert into a normalized drift event. Rather than forwarding the raw Alertmanager JSON, the endpoint parses the payload and emits a clean, consistent schema that is intentionally designed for extensibility:
+
+```json
+{
+    "event_type": "DRIFT_DETECTED",
+    "timestamp": "<ISO-8601>",
+    "status": "firing | resolved",
+    "alert_name": "DriftWarning | DriftCritical",
+    "severity": "warning | critical",
+    "drift_score": 0.82
+}
+```
+This event schema is the integration point for all downstream consumers. Today it writes to a structured event log; future phases will use it to trigger automated retraining, notify slack or PagerDuty, or publish to a message queue.
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart LR
+    DriftJob[Drift Job] --> DriftDB[(drift.db)]
+    DriftDB --> Metrics[GET /metrics]
+    Metrics --> Prometheus[Prometheus\n scrape every 15s]
+    Prometheus --> AlertRules[Alert Rules\nDriftWarning / DriftCritical]
+    AlertRules --> Alertmanager[Alertmanager]
+    Alertmanager --> Webhook[POST /webhook/drift]
+    Webhook --> EventSchema[Structured Event\nDRIFT_DETECTED]
+    EventSchema --> EventLog[Event Log]
+    EventSchema --> Future[Future: Retraining\nSlack / Kafka]
+```
 
 ### Secure Cloud Deployment (AWS)
 
@@ -279,7 +374,7 @@ resources:
         cpu: "3"
 ```
 
-- **Health Probes**: Readiness and liveness probes were wired to the `/health` endpoint. Readiness probes ensure traffic is only routed to fully initialized pods -- important given model load time at startup. Liveness probes trigger automatic container restarts on unrecoverable failures, removing the need for manual intervention.
+- **Health Probes**: Readiness and liveness probes were wired to the `/health` endpoint. Readiness probes ensure traffic is only routed to fully initialized pods — important given model load time at startup. Liveness probes trigger automatic container restarts on unrecoverable failures, removing the need for manual intervention.
 
 - **Scaling & Load Distribution**: The deployment was scaled to three replicas with Kubernetes service-level load balancing, and verified for uniform traffic distribution across pods.
 
@@ -409,6 +504,64 @@ python -m src.drift.inject_drift
 
 This injects controlled perturbation into a sample of inference inputs and confirms the engine responds with appropriate signal changes.
 
+### Running the Alerts & Triggers Pipeline
+
+The alerting pipeline requires the FastAPI service and Prometheus to be running concurrently.
+
+**1. Start the FastAPI inference service**
+
+```bash
+uvicorn src.serving.app:app --reload
+```
+
+The `/metric` endpoint will be available at `http://localhost:8000/metrics`, serving the latest `asie_data_drift_score` value.
+
+**2. Start Prometheus**
+
+```bash
+prometheus --config.file=prometheus.yml
+```
+
+Verify the scrape target is healthy at `http://localhost:9090/targets` — the `asie_drift_service` job should show as **UP**. Alert rules and current alert states are visible at `http://localhost:9090/rules` and `http://localhost:9090/alerts` respectively.
+
+**3. Start Alertmanager**
+
+```bash
+alertmanager --config.file=alertmanager.yml
+```
+
+Once running, firing alerts are routed automatically to `POST /webhook/drift`. The structured event payload can be tested manually:
+
+```bash
+curl -X POST http://localhost:8000/webhook/drift \
+    -H "Content-Type: application/json" \
+    -d '{
+        "status": "firing",
+        "alerts": [
+            {
+                "labels": {
+                    "alertname": DriftCritical",
+                    "severity": "critical"
+                }
+            }
+        ]
+    }'
+```
+
+**Expected event log output:**
+
+```json
+{
+    "event_type": "DRIFT_DETECTED",
+    "timestamp": "...",
+    "status": "firing",
+    "alert_name": "DriftCritical",
+    "severity": "critical",
+    "drift_score": 0.82
+}
+```
+
+
 ### Deploying on AWS (EKS)
 
 ASIE's cloud infrastructure lifecycle is managed through `asie.sh`, a unified script that handles the full squence of provisioning and teardown in a single command.
@@ -484,7 +637,7 @@ ASIE provides a robust foundation for building and operating reliable ML systems
 -   **Enhanced Reproducibility**: Every aspect of the ML lifecycle, from data to model, is versioned and traceable.
 -   **Increased Reliability**: Deterministic model loading, immutable artifacts, and isolated serving environments minimize production risks.
 -   **Improved Security**: Credential-free AWS deployment, network isolation, and secure access patterns protect sensitive data and models.
--   **Streamlined Operations**: `asie.sh` reduces the entire infrastructure lifecycle to a single command. Automated experiment tracking, structured inference logging, multi-signal drift detection, and safe shadow deployment shift the operational posture from reactive debugging to proactive monitoring.
+-   **Streamlined Operations**: `asie.sh` reduces the entire infrastructure lifecycle to a single command. Automated experiment tracking, structured inference logging, multi-signal drift detection, and an event-driven alerting pipeline (Prometheus → Alertmanager → webhook) shift the operational posture from reactive debugging to proactive, extensible monitoring.
 -   **Scalability & Maintainability**: Modular architecture and clear separation of concerns facilitate easier development, testing, and scaling of ML capabilities.
 
 ASIE transforms the development of sentiment analysis models into a mature, software-engineered process, ready for demanding production environments.
@@ -493,7 +646,6 @@ ASIE transforms the development of sentiment analysis models into a mature, soft
 
 ASIE is continuously evolving to incorporate advanced MLOps practices and enhance its production readiness. Current development efforts are focused on:
 
-1.  **Alerts & Triggers with Prometheus and Grafana**: Establishing a comprehensive monitoring and alerting system. Drift detection will trigger webhooks, feeding data into Prometheus for time-series monitoring, visualized and alerted through Grafana.
 2.  **Automated Retraining (Closed Training Loop)**: Developing a fully automated retraining pipeline, orchestrated by Airflow DAGs, to create a closed-loop system for continuous model improvement. This involves automated data fetching, training, evaluation, and model registration.
 3.  **Production-Real Retraining**: Optimizing the retraining process for production environments, including leveraging GPU jobs, FP16 precision for faster training, and utilizing AWS spot instances for cost-efficiency.
 4.  **GitOps Deployment (Automated Model Rollout)**: Implementing GitOps principles with ArgoCD to automate model rollouts, enabling controlled rolling updates and streamlined model promotion across different environments.
