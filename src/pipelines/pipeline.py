@@ -15,6 +15,7 @@ from src.utils.load_params import load_params
 from src.utils.reproducibility import set_seed, capture_env
 from src.serving.config import Settings
 from src.models.model_eval import evaluate_model
+from src.experiments.schemas import ExperimentResult
 
 
 from src.constants import PARAMS_FILE, ARTIFACTS_DIR, ARTIFACTS_FILE, TOKENIZER_FILE
@@ -118,7 +119,7 @@ def _setup_mlflow(cfg) -> None:
     mlflow.set_tracking_uri(Settings.MLFLOW_TRACKING_URI)
     mlflow.set_experiment(cfg['experiment_name'])
 
-def run_pipeline(overrides: dict | None = None) -> dict:
+def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
     """
     Execute the end-to-end training pipeline.
 
@@ -227,7 +228,7 @@ def run_pipeline(overrides: dict | None = None) -> dict:
             mlflow.log_dict(stats, 'data_stats.json')
 
             logging.info('Model and artifacts logged to mlflow successfully.')
-            result = {
+            result: ExperimentResult = {
                 "run_id": run.info.run_id,
                 "metrics": metrics,
                 "evaluation": evaluation,
@@ -245,13 +246,15 @@ def run_pipeline(overrides: dict | None = None) -> dict:
         return {
             "run_id": None,
             "metrics": {},
+            "evaluation": {"passed": False, "reason": "pipeline exception"},
             "config": overrides if overrides else {},
             "status": "failure",
-            "error": str(e)
+            "error": str(e),
+            "timestamp": datetime.datetime.now().isoformat()
         }
 
 
-def run_experiments(sweep_params: list[dict]) -> list[dict]:
+def run_experiments(sweep_params: list[dict]) -> list[ExperimentResult]:
     """
     Execute multiple pipeline runs with different hyperparameter configurations.
     
