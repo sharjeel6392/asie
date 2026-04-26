@@ -12,12 +12,12 @@ def select_best_model(results: List[ExperimentResult]) -> ExperimentResult | Non
         4. Return top candidate
     
     Args:
-        results (list[dict]): List of pipeline outputs
+        results (list[ExperimentResult]): List of pipeline outputs
     
     Returns:
-        dict | None: Best model result or None if no valid candidates.
+        ExperimentResult | None: Best model result or None if no valid candidates.
     """
-    valid_models = []
+    valid_models: List[ExperimentResult] = []
 
     for r in results:
         if (
@@ -32,9 +32,9 @@ def select_best_model(results: List[ExperimentResult]) -> ExperimentResult | Non
         return None
     
     # deterministic selection
-    best_model = max(
+    best_model: ExperimentResult = max(
         valid_models,
-        key = lambda x: x["metrics"]["eval_f1"]
+        key = lambda x: x.get('metrics',{}).get('eval_f1',0)
     )
 
     return best_model
