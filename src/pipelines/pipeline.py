@@ -216,7 +216,7 @@ def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
                 json.dump(artifact_dict, f, indent = 2)
 
             tokenizer_file_path = os.path.join(ARTIFACTS_DIR, "tokenizer")
-            tokenizer.save_pretrained(tokenizer_file_path)
+            tokenizer.save_pretrained(tokenizer_file_path)  # type: ignore
 
             mlflow.log_params(cfg)
             mlflow.log_params(env_info)
