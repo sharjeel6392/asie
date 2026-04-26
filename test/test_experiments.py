@@ -1,36 +1,65 @@
 from src.experiments.runner import run_experiments
 from src.experiments.selector import select_best_model
 from src.experiments.schemas import ExperimentResult
+from src.models.model_registry import register_shadow_model
 from typing import List
 
 def main():
     configs = [
+        # {
+        #     "model_type": "transformer",
+        #     "model_name": "bert-base-uncased",
+        #     "lr": 2e-5,
+        #     "epochs":2,
+        #     "batch_size": 16,
+        # },
+        # {
+        #     "model_type": "transformer",
+        #     "model_name": "roberta-base",
+        #     "lr": 2e-5,
+        #     "epochs": 2,
+        #     "batch_size": 16,
+        # },
+        # {
+        #     "model_type": "transformer",
+        #     "model_name": "distilbert-base-uncased",
+        #     "lr": 2e-5,
+        #     "epochs": 2,
+        #     "batch_size": 16,
+        # },
+        # {
+        #     "model_type": "transformer",
+        #     "model_name": "albert-base-v2",
+        #     "lr": 2e-5,
+        #     "epochs": 2,
+        #     "batch_size": 16,
+        # }
         {
             "model_type": "transformer",
             "model_name": "bert-base-uncased",
-            "lr": 2e-5,
-            "epochs":2,
+            "lr": 3e-5,
+            "epochs":3,
             "batch_size": 16,
         },
         {
             "model_type": "transformer",
             "model_name": "roberta-base",
-            "lr": 2e-5,
-            "epochs": 2,
+            "lr": 3e-5,
+            "epochs": 3,
             "batch_size": 16,
         },
         {
             "model_type": "transformer",
             "model_name": "distilbert-base-uncased",
-            "lr": 2e-5,
-            "epochs": 2,
+            "lr": 3e-5,
+            "epochs": 3,
             "batch_size": 16,
         },
         {
             "model_type": "transformer",
             "model_name": "albert-base-v2",
-            "lr": 2e-5,
-            "epochs": 2,
+            "lr": 3e-5,
+            "epochs": 3,
             "batch_size": 16,
         }
     ]
@@ -45,6 +74,12 @@ def main():
 
     print("\n============ Best Model ==============\n")
     print(best)
+
+    if best:
+        print("\n =========== Model Registry Update ==============\n")
+        register_shadow_model(best)
+        print("Shadow model registered in the model registry.")
+
 
 if __name__ == "__main__":
     main()

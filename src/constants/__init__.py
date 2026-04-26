@@ -19,6 +19,8 @@ MODEL_DIR = './model'
 MODEL_FILE = f'{MODEL_DIR}/model_artifact'
 TOKENIZER_FILE = 'tokenizer'
 
+REGISTRY_PATH = './model/model_registry.yaml'
+
 MLRUNS_DIR = './mlruns'
 
 EXPERIMENT_NAME = 'ASIE_Week1'

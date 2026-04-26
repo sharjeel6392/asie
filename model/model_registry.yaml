@@ -1,27 +1,85 @@
-models:
-  - name: asie-sentiment
-    type: primary
-    version: v1
-    run_id: e01e5e62db024765942763019e8a17a8
-    dataset:
-      name: financial_phrasebank
-      version: v1
-      hash: 2101709accd934211c3063f104444f8d
-    metrics:
-      eval_f1: 0.9646312383592995
-      eval_loss: 0.1449805647134781
-    state: promoted
-    created_at: 2026/02/14 23:20:08
-  - name: asie-sentiment-shadow
-    type: shadow
-    version: v2
-    run_id: 66f4f6363f8447dfb4256d465ec86e9a
-    dataset:
-      name: financial_phrasebank
-      version: v1
-      hash: 2101709accd934211c3063f104444f8d
-    metrics:
-      eval_f1: 0.9602491904487579
-      eval_loss: 0.23524315655231476
-    state: promoted
-    created_at: 2026/02/14 23:20:51
+history:
+- config:
+    batch_size: 16
+    epochs: 2
+    experiment_name: ASIE_Week1
+    lr: 2.0e-05
+    max_length: 128
+    model_name: roberta-base
+    model_type: transformer
+    seed: 42
+    test_size: 0.2
+  metrics:
+    eval_f1: 0.9715155446789214
+    eval_loss: 0.11129684001207352
+  registered_at: '2026-04-27T02:57:24.692644'
+  run_id: ddb90ee0a2654f5cac1bff3f66fe76f3
+  stage: shadow
+- config:
+    batch_size: 16
+    epochs: 2
+    experiment_name: ASIE_Week1
+    lr: 2.0e-05
+    max_length: 128
+    model_name: roberta-base
+    model_type: transformer
+    seed: 42
+    test_size: 0.2
+  metrics:
+    eval_f1: 0.9715155446789214
+    eval_loss: 0.11129684001207352
+  promoted_at: '2026-04-27T02:57:24.692681'
+  registered_at: '2026-04-27T02:57:24.692644'
+  run_id: ddb90ee0a2654f5cac1bff3f66fe76f3
+  stage: primary
+- config:
+    batch_size: 16
+    epochs: 3
+    experiment_name: ASIE_Week1
+    lr: 3.0e-05
+    max_length: 128
+    model_name: roberta-base
+    model_type: transformer
+    seed: 42
+    test_size: 0.2
+  metrics:
+    eval_f1: 0.9823701568940957
+    eval_loss: 0.09703538566827774
+  registered_at: '2026-04-27T03:23:30.405143'
+  run_id: 286aecc660884060ac72f46ce3c4ab29
+  stage: shadow
+primary:
+  config:
+    batch_size: 16
+    epochs: 2
+    experiment_name: ASIE_Week1
+    lr: 2.0e-05
+    max_length: 128
+    model_name: roberta-base
+    model_type: transformer
+    seed: 42
+    test_size: 0.2
+  metrics:
+    eval_f1: 0.9715155446789214
+    eval_loss: 0.11129684001207352
+  promoted_at: '2026-04-27T02:57:24.692681'
+  registered_at: '2026-04-27T02:57:24.692644'
+  run_id: ddb90ee0a2654f5cac1bff3f66fe76f3
+  stage: primary
+shadow:
+  config:
+    batch_size: 16
+    epochs: 3
+    experiment_name: ASIE_Week1
+    lr: 3.0e-05
+    max_length: 128
+    model_name: roberta-base
+    model_type: transformer
+    seed: 42
+    test_size: 0.2
+  metrics:
+    eval_f1: 0.9823701568940957
+    eval_loss: 0.09703538566827774
+  registered_at: '2026-04-27T03:23:30.405143'
+  run_id: 286aecc660884060ac72f46ce3c4ab29
+  stage: shadow
