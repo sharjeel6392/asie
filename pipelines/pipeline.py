@@ -14,6 +14,7 @@ from src.models.model_building import train_model
 from src.utils.load_params import load_params
 from src.utils.reproducibility import set_seed, capture_env
 from src.serving.config import Settings
+from src.models.model_eval import evaluate_model
 
 
 from src.constants import PARAMS_FILE, ARTIFACTS_DIR, ARTIFACTS_FILE, TOKENIZER_FILE
@@ -188,6 +189,7 @@ def run_pipeline(overrides: dict | None = None) -> dict:
 
             model_temp_path, metrics = train_model(cfg)
             metrics = normalize_metrics(metrics)
+            evaluation = evaluate_model(metrics, threshold = 0.75)
             logging.info(f'Model training completed. Saving artifacts...')
             artifact_dict = {
                 'metrics': metrics,
@@ -228,11 +230,15 @@ def run_pipeline(overrides: dict | None = None) -> dict:
             result = {
                 "run_id": run.info.run_id,
                 "metrics": metrics,
+                "evaluation": evaluation,
                 "config": cfg,
                 "data_hash": data_hash,
                 "status": "success",
                 "timestamp": datetime.datetime.now().isoformat()
             }
+            if not evaluation['passed']:
+                result['status'] = 'failure'
+                result['failure_reason'] = evaluation['reason']
         return result
     except Exception as e:
         logging.error(f'Pipeline failed with error: {e}')
