@@ -33,7 +33,7 @@ def save_registry(registry: dict) -> None:
     
     os.replace(temp_name, REGISTRY_PATH)
 
-def register_shadow_model(result: ExperimentResult) -> None:
+def register_shadow_model(result: ExperimentResult) -> bool:
     """
     Register a model as shadow (candidate) in the model registry.
 
@@ -51,7 +51,7 @@ def register_shadow_model(result: ExperimentResult) -> None:
 
         if new_f1 <= current_f1:
             logging.info('New model is worse than current shadow. Skipping update.')
-            return
+            return False
 
     entry = {
         "run_id": result.get("run_id"),
@@ -78,6 +78,7 @@ def register_shadow_model(result: ExperimentResult) -> None:
         registry["history"].append(copy.deepcopy(primary_entry))
 
     save_registry(registry)
+    return True
 
 def promote_to_primary() -> None:
     """
