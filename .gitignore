@@ -24,3 +24,4 @@ asie.egg-info/
 eks/tmp-cluster.yaml
 .helmignore
 drift.db
+.vscode/
