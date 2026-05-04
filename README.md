@@ -1,4 +1,24 @@
 # Automated Sentiment Intelligence Engine (ASIE)
+![Python](https://img.shields.io/badge/Python-3.11-blue)
+![MLflow](https://img.shields.io/badge/MLflow-tracking-blue)
+![DVC](https://img.shields.io/badge/Data-DVC-orange)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688)
+![Airflow-%5BWIP%5D](https://img.shields.io/badge/Orchestration-Airflow--%5BWIP%5D-017CEE)
+![AWS EKS](https://img.shields.io/badge/AWS-EKS-orange)
+![Terraform](https://img.shields.io/badge/IaC-Terraform-purple)
+![ArgoCD-%5BWIP%5D](https://img.shields.io/badge/GitOps-ArgoCD--%5BWIP%5D-orange)
+![Helm](https://img.shields.io/badge/Deployment-Helm-blue)
+![Prometheus](https://img.shields.io/badge/Monitoring-Prometheus-red)
+
+## Table of Contents
+1. [Product Overview](#-product-overview)
+2. [Tech Stack](#-tech-stack)
+3. [Key Capabilities](#-key-capabilities)
+4. [System Architecture](#-system-architecture)
+5. [Operational Tooling](#-operational-tooling--asiesh)
+6. [How to Use ASIE](#-how-to-use-asie)
+7. [Benefits of ASIE](#-benefits-of-asie)
+8. [Work in Progress](#-work-in-progress)
 
 ## 🚀 Product Overview
 
@@ -10,6 +30,30 @@ ASIE's core value proposition lies in its ability to deliver:
 - **Secure & Scalable Inference**: Deploying models in a production-ready, secure, and observable environment.
 - **Operational Excellence**: Providing tools for system-level testing, environment capture, and artifact management.
 
+## 🛠 Tech Stack
+
+### Machine Learning & Data
+- <b> Python 3.11: </b> Primary development language.
+- <b> HuggingFace Transformers: </b> Core sentiment analysis model framework.
+- <b> MLflow: </b> Centralized experiment tracking and model artifact management.
+- <b> DVC (Data Version Control): </b> Ensures data versioning and lineage for Parquet datasets.
+
+### Inference & API Layer
+- <b> FastAPI: </b> High-performance API for model serving and observability.
+- <b> Docker: </b> Containerization of training and inference environments.
+- <b> SQLite: </b> Local Persistence for inference logs and drift metrics.
+
+### Cloud & Infrastructure (AWS)
+- <b> Amazon EKS: </b> Managed Kubernetes orchestration for the serving platform.
+- <b> Terraform: </b> Declarative Infrastructure-as-Code for VPC and networking.
+- <b> AWS ECR & IAM (IRSA): </b> Secure image registry and credential-free pod identity.
+
+### Operations & Observability
+- <b> Helm: </b> Package management for Kubernetes deployments.
+- <b> Prometheus & Alertmanager: </b> Monitoring drift scores and triggering automated alerts.
+- <b> ArgoCD (GitOps): </b><i>[WIP]</i> Automating model rollouts and environment consistency.
+- <b> Apache Airflow: </b> <i>[WIP]</i> Orchestrating the end-to-end retraining pipeline.
+
 ## 🎯 Key Capabilities
 
 ASIE offers a suite of features engineered for MLOps maturity:
@@ -20,11 +64,10 @@ ASIE offers a suite of features engineered for MLOps maturity:
 - **Immutable Model Promotion**: A defined process to convert experimental runs into approved, versioned release artifacts for serving.
 - **Advanced Data Versioning**: Treating datasets as identified, versioned artifacts with explicit structure and lineage, independent of training code.
 - **Secure Cloud Deployment**: Implementing robust AWS infrastructure patterns including private subnets, bastion hosts, ECR, and IAM roles for credential-free operations.
-- **Kubernetes-Native Orchestration**: Running the inference service on Amazon EKS with Helm-managed deployments, CPU-based autoschaling (HPA), self-healing via liveness probes, and zero-downtime rolling updates.
+- **Kubernetes-Native Orchestration**: Running the inference service on Amazon EKS with Helm-managed deployments, CPU-based autoscaling (HPA), self-healing via liveness probes, and zero-downtime rolling updates.
 - **Structured Inference Logging**: Dedicated SQLite-based logging for online predictions, capturing detailed metadata, latency, and confidence scores.
-- **Multi-Signal Drift Detection**: A time-windowed drift detection engine that monitors input distribution, output label distribution, confidence score shifts, and shadow model disagreement —  enabling proactive detection of model degradation before acciracy metrics are available.
+- **Multi-Signal Drift Detection**: A time-windowed drift detection engine that monitors input distribution, output label distribution, confidence score shifts, and shadow model disagreement —  enabling proactive detection of model degradation before accuracy metrics are available.
 - **Event-Driven Alerting Pipeline**: Drift metrics are exposed to Prometheus, evaluated against defined alert thresholds, routed through Alertmanager, and delivered to a structured webhook endpoint — transforming passive drift signal into actionable, extensible system events.
-- **Structured Inference Logging**: Dedicated SQLite-based logging for online predictions, capturing detailed metadata, latency, and confidence scores.
 - **Safe Shadow Deployment**: Enabling silent execution of new model versions alongside primary models for performance comparison and risk mitigation without impacting live traffic.
 
 ## 🏗 System Architecture
@@ -160,7 +203,7 @@ flowchart LR
     -   **InferenceLogger**: Provides observability by logging inference metadata, latency, and confidence scores to MLflow, ensuring traceability without affecting prediction responses.
 
 ### Drift Detection & Model Monitoring
-Machine learning systems degrade silently. Unlike traditional software, failures don't surface as expections or error rates — they appear as gradual shifts in input distributions and quietly drops in prediction quality. ASIE addresses this with a multi-signal drift detection engine that operates over time-windowed batches of logged inference data, providing proactive visibility into model behavior before accuracy degradation becomes critical.
+Machine learning systems degrade silently. Unlike traditional software, failures don't surface as expectations or error rates — they appear as gradual shifts in input distributions and quietly drop in prediction quality. ASIE addresses this with a multi-signal drift detection engine that operates over time-windowed batches of logged inference data, providing proactive visibility into model behavior before accuracy degradation becomes critical.
 
 **Why Accuracy Alone Is Insufficient**
 
@@ -197,7 +240,7 @@ flowchart LR
     ShadowDrift --> ImpactAnalysis
 ```
 
--   **Feature Engineering Pipeline**: Pricesses raw inference log entries into structured feature representations suitable for distributional comparison — extracting text embeddings, token statistics, and metadata fields.
+-   **Feature Engineering Pipeline**: Processes raw inference log entries into structured feature representations suitable for distributional comparison — extracting text embeddings, token statistics, and metadata fields.
 
 -   **Drift Detection Engine**: Applies statistical tests and distributional comparisons across each signal independently, operating over a configurable time window of logged requests.
 -   **Batch Worker**: Manually triggered at present, running on a specified timestamp range to analyse a defined window of production traffic.
@@ -206,15 +249,11 @@ flowchart LR
 
 **Synthetic Drift Injection**
 
-To validate detection sensitivity without waiting for real-world drift, the system supports synthetic drift injection — introducing controlled perturbations (e.g., sland substitution, tone shifts) into inference inputs. This enables reproducible calibration of detection thresholds and confirms the engine responds corectly before it is needed in production.
-
-**Current State**
-
-Drift detection is currently triggered manually against a specified time window. Automated triggering, alerting via Prometheus and Grafana, and integrating with the retraining loop are the subject of the next development phase.
+To validate detection sensitivity without waiting for real-world drift, the system supports synthetic drift injection — introducing controlled perturbations (e.g., slang substitution, tone shifts) into inference inputs. This enables reproducible calibration of detection thresholds and confirms the engine responds correctly before it is needed in production.
 
 ### Alerts & Triggers
 
-With drift signals being computed and persisted, the next layer makes drift detection <i>actionable</i>. Rather than simply logging a score, ASIE now exposes drift as a machine-readable metric, evaluates it continuously against defined thresholds, and routes alert events through a structured pipeline — forming the foundation for automatic retraining and incidenct response.
+With drift signals being computed and persisted, the next layer makes drift detection <i>actionable</i>. Rather than simply logging a score, ASIE now exposes drift as a machine-readable metric, evaluates it continuously against defined thresholds, and routes alert events through a structured pipeline — forming the foundation for automatic retraining and incident response.
 
 The full event pipeline is:
 ```
@@ -238,7 +277,7 @@ This stores `asie_data_drift_score` as a time series, making the full history of
 
 **Alert Rules**
 
-Two alert levels are defined, caliberated against observed drift behavior (baseline ~0.16, gradual drift ~0.45-0.5, spoles ~0.8+):
+Two alert levels are defined, calibrated against observed drift behavior (baseline ~0.16, gradual drift ~0.45-0.5, spikes ~0.8+):
 
 ```yaml
 # DriftWarning — sustained gradual drift
@@ -249,7 +288,7 @@ for: 5m
 expr: asie_data_drift_score > 0.75
 for: 1m
 ```
-The `for:` duration is critical: it prevents short-lived fluctuations from triggering false positives. Prometheues evaluates alerts through three states — `inactive → pending → firing` — only promoting to `firing` once the condition has been sustained for the configured duration.
+The `for:` duration is critical: it prevents short-lived fluctuations from triggering false positives. Prometheus evaluates alerts through three states — `inactive → pending → firing` — only promoting to `firing` once the condition has been sustained for the configured duration.
 
 **Alertmanager Routing**
 
@@ -281,7 +320,7 @@ A `POST /webhook/drift` endpoint receives Alertmanager payloads and transforms e
     "drift_score": 0.82
 }
 ```
-This event schema is the integration point for all downstream consumers. Today it writes to a structured event log; future phases will use it to trigger automated retraining, notify slack or PagerDuty, or publish to a message queue.
+This event schema is the integration point for all downstream consumers. Today it writes to a structured event log; future phases will use it to trigger automated retraining, notifying Slack or PagerDuty, or publish to a message queue.
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
@@ -346,7 +385,7 @@ flowchart TD
 
 ### Kubernetes Orchestration on EKS
 
-ASIE has graduated from a single-EC2 deployment model to a fully orchestrated, production-grade inference platform on Amazon Elastic Kubernetes Service (<b>EKS</b>). This transition was carried out in two deliberate phases: first hardening the inference service for Kubernetes locally, then migrate the validated setup to a managed AWS cluster.
+ASIE has graduated from a single-EC2 deployment model to a fully orchestrated, production-grade inference platform on Amazon Elastic Kubernetes Service (<b>EKS</b>). This transition was carried out in two deliberate phases: first hardening the inference service for Kubernetes locally, then migrating the validated setup to a managed AWS cluster.
 
 #### Why Kubernetes?
 
@@ -357,12 +396,12 @@ The transition from EC2 to Kubernetes was driven by the need for:
 - zero-downtime deployments
 - declarative infrastructure
 
-Kubernetes proves these capabilities natively, making it the natural evolution for production-grade ML systems.
+Kubernetes provides these capabilities natively, making it the natural evolution for production-grade ML systems.
 
 #### Phase 1 — Kubernetes Hardening (Local)
 Before moving to EKS, the inference service was containerized and deployed on a local Kubernetes cluster to establish and validate production-readiness primitives in a low-cost environment.
 
-- **Resource Governance**: Explicitly CPU and memory requests and limits were introduced to guarantee scheduling capacity, control memory usage, and ensure stable multi-pod deployments. For example:
+- **Resource Governance**: Explicit CPU and memory requests and limits were introduced to guarantee scheduling capacity, control memory usage, and ensure stable multi-pod deployments. For example:
 
 ```yaml
 resources:
@@ -378,7 +417,7 @@ resources:
 
 - **Scaling & Load Distribution**: The deployment was scaled to three replicas with Kubernetes service-level load balancing, and verified for uniform traffic distribution across pods.
 
--**Self-Healing Validation**: Manual pod deletion confirmed automatic recreation without service disruption, validating Kubernetes' reconciliation loop under the intended configuration.
+- **Self-Healing Validation**: Manual pod deletion confirmed automatic recreation without service disruption, validating Kubernetes' reconciliation loop under the intended configuration.
 
 #### Phase 2 — AWS EKS Deployment
 
@@ -436,13 +475,13 @@ Request lifecycle:
     4. Predictor processes input and runs model forward pass
     5. Response returned to client
 
-Failure handline:
+Failure handling:
     Pod crash     → Kubernetes restarts automatically (liveness probe)
     Traffic spike → HPA scales replica count to meet demand
     Deployment    → Rolling update replaces pods incrementally, zero downtime
 ```
 
-## Operational Tooling — `asie.sh`
+## ⚙️ Operational Tooling — `asie.sh`
 
 To consolidate the full infrastructure lifecycle into a single, repeatable interface, a unified shell script (`asie.sh`) was introduced. It encapsulates the entire provisioning and teardown sequence, eliminating manual multi-step coordination.
 
@@ -458,7 +497,7 @@ Terraform provisioning (VPC, subnets, NAT Gateway, bastion), Docker image build 
 # Full teardown
 ./asie.sh down
 ```
-Teeardown removes the Helm release, Kubernetes namespace, EKS cluster, ECR repository, and all Terraform-managed infrastructure — ensuring zero residual AWS resources and no idle costs between development sessions.
+Teardown removes the Helm release, Kubernetes namespace, EKS cluster, ECR repository, and all Terraform-managed infrastructure — ensuring zero residual AWS resources and no idle costs between development sessions.
 
 ## 🛠 How to Use ASIE
 
@@ -514,7 +553,7 @@ The alerting pipeline requires the FastAPI service and Prometheus to be running 
 uvicorn src.serving.app:app --reload
 ```
 
-The `/metric` endpoint will be available at `http://localhost:8000/metrics`, serving the latest `asie_data_drift_score` value.
+The `/metrics` endpoint will be available at `http://localhost:8000/metrics`, serving the latest `asie_data_drift_score` value.
 
 **2. Start Prometheus**
 
@@ -540,7 +579,7 @@ curl -X POST http://localhost:8000/webhook/drift \
         "alerts": [
             {
                 "labels": {
-                    "alertname": DriftCritical",
+                    "alertname": "DriftCritical",
                     "severity": "critical"
                 }
             }
@@ -564,7 +603,7 @@ curl -X POST http://localhost:8000/webhook/drift \
 
 ### Deploying on AWS (EKS)
 
-ASIE's cloud infrastructure lifecycle is managed through `asie.sh`, a unified script that handles the full squence of provisioning and teardown in a single command.
+ASIE's cloud infrastructure lifecycle is managed through `asie.sh`, a unified script that handles the full sequence of provisioning and teardown in a single command.
 
 **Provision and deploy**:
 ```bash
@@ -576,7 +615,7 @@ This runs the following steps in order:
 3. EKS cluster is created via `eksctl`.
 4. OIDC provider is configured for IRSA.
 5. `kubeconfig` is updated for `kubectl` access.
-6. IRSA service account is craeted and bound to its IAM role.
+6. IRSA service account is created and bound to its IAM role.
 7. Helm deploys the inference service to the cluster
 8. AWS provisions the external load balancer.
 
@@ -646,6 +685,6 @@ ASIE transforms the development of sentiment analysis models into a mature, soft
 
 ASIE is continuously evolving to incorporate advanced MLOps practices and enhance its production readiness. Current development efforts are focused on:
 
-2.  **Automated Retraining (Closed Training Loop)**: Developing a fully automated retraining pipeline, orchestrated by Airflow DAGs, to create a closed-loop system for continuous model improvement. This involves automated data fetching, training, evaluation, and model registration.
-3.  **Production-Real Retraining**: Optimizing the retraining process for production environments, including leveraging GPU jobs, FP16 precision for faster training, and utilizing AWS spot instances for cost-efficiency.
-4.  **GitOps Deployment (Automated Model Rollout)**: Implementing GitOps principles with ArgoCD to automate model rollouts, enabling controlled rolling updates and streamlined model promotion across different environments.
+1.  **Automated Retraining (Closed Training Loop)**: Developing a fully automated retraining pipeline, orchestrated by Airflow DAGs, to create a closed-loop system for continuous model improvement. This involves automated data fetching, training, evaluation, and model registration.
+2.  **Production-Real Retraining**: Optimizing the retraining process for production environments, including leveraging GPU jobs, FP16 precision for faster training, and utilizing AWS spot instances for cost-efficiency.
+3.  **GitOps Deployment (Automated Model Rollout)**: Implementing GitOps principles with ArgoCD to automate model rollouts, enabling controlled rolling updates and streamlined model promotion across different environments.

@@ -1,0 +1,46 @@
+torch==2.6.0
+transformers==4.57.6
+scikit-learn==1.8.0
+pandas==2.3.3
+numpy==2.4.1
+datasets==2.21.0
+pyyaml==6.0.3
+
+# --- Data Layer & Versioning ---
+# Used for canonical Parquet format and dataset hashing
+pyarrow==22.0.0
+accelerate==1.12.0
+fastparquet==2024.2.0
+dvc==3.48.4
+
+# --- Orchestration --- 
+
+
+# --- AWS ---
+boto3
+
+# --- Serving & Inference Layer (Week 3) ---
+# Used for the production-style inference service
+fastapi==0.128.0
+uvicorn[standard]==0.40.0
+pydantic==2.12.5
+python-multipart
+
+# --- Experiment Tracking & Observability ---
+# Used for artifact persistence and inference logging
+mlflow==3.9.0
+
+#dagshub  # Commonly used with MLflow for remote tracking
+# sqlite3
+
+# --- Testing & Quality Assurance ---
+# Used for system-level smoke tests
+pytest==9.0.2
+httpx==0.28.1    # Required for FastAPI's TestClient
+
+# --- Monitoring tools ---
+prometheus_client==0.25.0
+
+#---- Local Development & Environment Management ----
+python-dotenv==1.2.1
+tqdm==4.67.1

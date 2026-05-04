@@ -4,6 +4,7 @@ logs/
 mlruns/
 runs/
 data/
+.venv/
 venv/
 mlflow.db
 __pycache__/

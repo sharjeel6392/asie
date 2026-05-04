@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # 1. Metadata Database for Airflow
+  postgres:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. MLflow Tracking Server
+  mlflow:
+    image: ghcr.io/mlflow/mlflow
+    container_name: asie_mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      - MLFLOW_TRACKING_URI=sqlite:///mlflow.db
+    command: >
+      mlflow server 
+      --backend-store-uri sqlite:///mlflow.db 
+      --host 0.0.0.0 
+      --port 5000
+
+  # 3. Airflow Webserver & Scheduler
+  # Using a single service for local dev simplicity
+  airflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: asie_airflow
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./src:/opt/airflow/plugins/src  # Syncs your model logic
+      - ./requirements/inference.txt:/requirements.txt
+    environment:
+      - PYTHONPATH=${PYTHONPATH}:/opt/airflow/plugins
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    ports:
+      - "8080:8080"
+    command: standalone
