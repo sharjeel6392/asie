@@ -3,7 +3,7 @@
 import time
 import torch
 from src.constants import MAX_BATCH_SIZE
-from src.logger import logging
+from src.logger import configure_logger
 
 class Predictor:
     '''
@@ -20,6 +20,7 @@ class Predictor:
         self.loader = loader
     
     def predict(self, text, model_type: str = 'primary'):
+        logger = configure_logger()
         
         if isinstance(text, str):
             texts = [text]
@@ -40,7 +41,7 @@ class Predictor:
             model = self.loader.shadow_model
             tokenizer = self.loader.shadow_tokenizer
         else:
-            logging.error("Model type invalid")
+            logger.error("Model type invalid")
             raise
         device = self.loader.device
 

@@ -1,11 +1,11 @@
 import os
 import shutil
 import mlflow
-from mlflow import tracking
 from mlflow import artifacts
 
 from src.models.model_registry import load_registry
-from serving.config import Settings
+from src.serving.config import Settings
+from src.logger import configure_logger
 
 EXPORT_DIR = "exported_model"
 
@@ -17,6 +17,7 @@ def _copy(src, dst):
     shutil.copytree(src, dst)
 
 def export_models():
+    logger = configure_logger()
     registry = load_registry()
 
     mlflow.set_tracking_uri(Settings.MLFLOW_TRACKING_URI)
@@ -32,7 +33,7 @@ def export_models():
     if not primary:
         raise ValueError('No primary model found in registry')
     
-    print('Exporting Primary mode...')
+    logger.debug('Exporting Primary mode...')
 
     model_path = _download(primary['run_id'], 'model')
     tokenizer_path = _download(primary['run_id'], "tokenizer")
@@ -44,7 +45,7 @@ def export_models():
     shadow = registry.get('shadow')
 
     if shadow:
-        print('Exporting shadow model...')
+        logger.debug('Exporting shadow model...')
 
         model_path = _download(shadow['run_id'], 'model')
         tokenizer_path = _download(shadow['run_id'], 'tokenizer')
@@ -52,8 +53,8 @@ def export_models():
         _copy(model_path, os.path.join(EXPORT_DIR, "shadow", "model"))
         _copy(tokenizer_path, os.path.join(EXPORT_DIR, 'shadow', 'tokenizer'))
     
-    print('Export complete')
+    logger.debug('Export complete')
 
 
-if __name__ == '__main__':
-    export_models()
+# if __name__ == '__main__':
+#     export_models()

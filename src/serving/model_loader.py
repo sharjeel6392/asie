@@ -1,7 +1,6 @@
 # Lifecycle Management
-
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from src.logger import logging
+from src.logger import configure_logger
 from src.serving.config import Settings
 
 class ModelLoader:
@@ -23,14 +22,15 @@ class ModelLoader:
         """
         Load model + tokenizer here.
         """
-        logging.info(f'Using device: {self.device}')
+        logger = configure_logger()
+        logger.info(f'Using device: {self.device}')
 
         try:
             self.primary_tokenizer = AutoTokenizer.from_pretrained(Settings.PRIMARY_TOKENIZER_PATH)
             self.primary_model = AutoModelForSequenceClassification.from_pretrained(Settings.PRIMARY_MODEL_PATH)
             self.primary_model.config.output_hidden_states = True
         except Exception as e:
-            logging.exception(f'Unexpected error occured while loading model artifacts: {e}')
+            logger.exception(f'Unexpected error occured while loading model artifacts: {e}')
             self.ready = False
             raise
         try:
@@ -41,7 +41,7 @@ class ModelLoader:
             self.shadow_model.eval()
             self.shadow_model.config.output_hidden_states = True
         except Exception as e:
-            logging.warning(f'Shadow model could not be loaded. Loading failed with exception: {e}')
+            logger.warning(f'Shadow model could not be loaded. Loading failed with exception: {e}')
             self.shadow_model = None
             self.shadow_tokenizer = None
         
@@ -51,7 +51,7 @@ class ModelLoader:
 
         self.ready = True
 
-        logging.info(f'Model and Tokenizer loaded successfully.')
+        logger.info(f'Model and Tokenizer loaded successfully.')
     
     def is_ready(self) -> bool:
         return self.primary_model is not None

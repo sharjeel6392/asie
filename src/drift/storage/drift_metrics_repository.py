@@ -5,6 +5,7 @@
 import sqlite3
 from datetime import datetime
 import os
+from src.logger import configure_logger
 
 DB_PATH = "drift.db"
 
@@ -22,7 +23,8 @@ def init_drift_db():
     conn.close()
 
 def insert_drift_metric(final_drift_score: float):
-    print(f'[DEBUG] DB PATH: {os.path.abspath(DB_PATH)}')
+    logger = configure_logger()
+    logger.debug(f'DB PATH: {os.path.abspath(DB_PATH)}')
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -57,5 +59,5 @@ def get_latest_drift_metric() -> float:
         return row[0]
     return 0.0
 
-if __name__ =='__main__':
-    init_drift_db()
+# if __name__ =='__main__':
+#     init_drift_db()

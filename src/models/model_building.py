@@ -1,5 +1,6 @@
 from src.models.factory import get_model
-from src.logger import logging
+from src.logger import configure_logger
+
 
 def train_model(cfg: dict) -> tuple[str, dict]:
     """
@@ -11,8 +12,9 @@ def train_model(cfg: dict) -> tuple[str, dict]:
     Returns:
         tuple[str, dict]: Path to the saved model and evaluation metrics
     """
+    logger = configure_logger()
     try:
-        logging.debug("Initializing model building")
+        logger.debug("Initializing model building")
 
         model = get_model(cfg)
 
@@ -22,5 +24,5 @@ def train_model(cfg: dict) -> tuple[str, dict]:
         return save_path, metrics
     
     except Exception as e:
-        logging.error(f'Unexpected error during model training: {e}')
+        logger.error(f'Unexpected error during model training: {e}')
         raise

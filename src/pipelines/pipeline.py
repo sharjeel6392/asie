@@ -7,7 +7,7 @@ import subprocess
 import argparse
 import datetime
 
-from src.logger import logging
+from src.logger import configure_logger
 from src.data_manipulation.data_ingestion import ingest_data
 from src.data_manipulation.data_preprocessing import preprocess_data
 from src.models.model_building import train_model
@@ -16,8 +16,6 @@ from src.utils.reproducibility import set_seed, capture_env
 from src.serving.config import Settings
 from src.models.model_eval import evaluate_model
 from src.experiments.schemas import ExperimentResult
-
-
 from src.constants import PARAMS_FILE, ARTIFACTS_DIR, ARTIFACTS_FILE, TOKENIZER_FILE
 
 def hash_df(df: pd.DataFrame) -> str:
@@ -115,9 +113,9 @@ def _prepare_data(cfg) -> tuple[pd.DataFrame, dict, str]:
     data_hash = hash_df(df)
     return df, stats, data_hash
 
-def _setup_mlflow(cfg) -> None:
-    mlflow.set_tracking_uri(Settings.MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(cfg['experiment_name'])
+# def _setup_mlflow(cfg) -> None:
+#     mlflow.set_tracking_uri(Settings.MLFLOW_TRACKING_URI)
+#     mlflow.set_experiment(cfg['experiment_name'])
 
 def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
     """
@@ -148,7 +146,8 @@ def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
             - timestamp (str): ISO formatted timestamp of pipeline execution.
             - error (str, optional): Error message if pipeline failed.
     """
-
+    logger = configure_logger()
+    logger.info("RUN PIPELINE CALLED")
     try:
         cfg = load_params(PARAMS_FILE)
 
@@ -157,26 +156,26 @@ def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
                 if v is not None:
                     cfg[k] = v
 
-        _setup_mlflow(cfg)
+        # _setup_mlflow(cfg)
         
-        print(f"Connected to MLflow at: {mlflow.get_tracking_uri()}")
+        logger.debug(f"Connected to MLflow at: {mlflow.get_tracking_uri()}")
 
-        logging.info(f'Initiating data ingestion')
+        logger.debug(f'Initiating data ingestion')
         df, stats, data_hash = _prepare_data(cfg)
-        logging.info(f'Data ingestion complete')
+        logger.debug(f'Data ingestion complete')
         
         # ===========================================================
         # Data Preprocessing
         # ===========================================================
 
-        logging.info('Starting data preprocessing...')
+        logger.info('Starting data preprocessing...')
         tokenizer = preprocess_data(cfg)
-        logging.info('Data preprocessing completed and saved.')
+        logger.info('Data preprocessing completed and saved.')
 
         # ===========================================================
         # Training, Evaluation and MLflow Logging
         # ===========================================================
-        logging.info('Starting model training and mlflow logging...')
+        logger.info('Starting model training and mlflow logging...')
 
         set_seed(cfg['seed'])
         env_info = capture_env()
@@ -186,12 +185,10 @@ def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
         # Model Training and Parameter logging with mlflow
         # ===========================================================
         with mlflow.start_run() as run:
-            print(f'RUN ID: {run.info.run_id}')
-
             model_temp_path, metrics = train_model(cfg)
             metrics = normalize_metrics(metrics)
             evaluation = evaluate_model(metrics, threshold = 0.75)
-            logging.info(f'Model training completed. Saving artifacts...')
+            logger.info(f'Model training completed. Saving artifacts...')
             artifact_dict = {
                 'metrics': metrics,
                 'data_hash': data_hash,
@@ -203,13 +200,12 @@ def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
 
             if not os.path.exists(ARTIFACTS_DIR):
                 os.makedirs(ARTIFACTS_DIR)
-                print(f"Created directory: {ARTIFACTS_DIR}")
             
             file_path = os.path.join(ARTIFACTS_DIR, ARTIFACTS_FILE)
             if not os.path.exists(file_path):
                 # This 'with open' in 'w' mode will create the file automatically 
                 # as long as the directory exists.
-                print(f"File {ARTIFACTS_FILE} does not exist. It will be created now.")
+                logger.debug(f"File {ARTIFACTS_FILE} does not exist. It will be created now.")
 
 
             with open(os.path.join(ARTIFACTS_DIR, ARTIFACTS_FILE), 'w') as f:
@@ -227,7 +223,7 @@ def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
             mlflow.log_artifacts(tokenizer_file_path, artifact_path=TOKENIZER_FILE)
             mlflow.log_dict(stats, 'data_stats.json')
 
-            logging.info('Model and artifacts logged to mlflow successfully.')
+            logger.info('Model and artifacts logged to mlflow successfully.')
             result: ExperimentResult = {
                 "run_id": run.info.run_id,
                 "metrics": metrics,
@@ -242,7 +238,7 @@ def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
                 result['failure_reason'] = evaluation['reason']
         return result
     except Exception as e:
-        logging.error(f'Pipeline failed with error: {e}')
+        logger.error(f'Pipeline failed with error: {e}')
         return {
             "run_id": None,
             "metrics": {},
@@ -254,35 +250,18 @@ def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
         }
 
 
-def run_experiments(sweep_params: list[dict]) -> list[ExperimentResult]:
-    """
-    Execute multiple pipeline runs with different hyperparameter configurations.
-    
-    This function is used for hyperparameter tuning and model comparison by running the 
-    pipeline with various parameter combinations defined in the sweep_params list.
+# if __name__ == '__main__':
+#     # parser = argparse.ArgumentParser()
+#     # parser.add_argument("--lr", type=float)
+#     # parser.add_argument("--epochs", type=int)
 
-    Args:
-        sweep_params (list[dict]): List of parameter dictionaries.
+#     # args = parser.parse_args()
+#     # overrides = {k: v for k, v in vars(args).items() if v is not None}
 
-    Returns:
-        list[dict]: list of structured pipeline results.
-    """
-    return [run_pipeline(params) for params in sweep_params]
+#     # run_pipeline(overrides)
 
-if __name__ == '__main__':
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--lr", type=float)
-    # parser.add_argument("--epochs", type=int)
-
-    # args = parser.parse_args()
-    # overrides = {k: v for k, v in vars(args).items() if v is not None}
-
-    # print(run_pipeline(overrides))
-
-    sweep = [
-        {'lr': 2e-5, 'epochs': 5, 'seed': 123},     # primary model
-        {'lr': 2e-4, 'epochs': 5},                  # shadow model
-    ]
-
-    print(run_experiments(sweep))
+#     sweep = [
+#         {'lr': 2e-5, 'epochs': 5, 'seed': 123},     # primary model
+#         {'lr': 2e-4, 'epochs': 5},                  # shadow model
+#     ]
     

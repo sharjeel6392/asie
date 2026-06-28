@@ -20,10 +20,3 @@ def promote(run_id, metrics, dataset):
     registry['models'].append(entry)
     with open (registry_path, 'w') as f:
         yaml.safe_dump(registry, f)
-
-if __name__ == '__main__':
-    promote(
-        run_id='5a1df1a88df5436586bb3b105913eeab',
-        metrics = {'eval_f1': 0.9668874172185431, 'eval_loss': 0.1513603776693344},
-        dataset = {'name': 'financial_phrasebank', 'version': 'v1'},
-    )

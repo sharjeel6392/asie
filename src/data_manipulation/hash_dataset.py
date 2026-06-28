@@ -8,6 +8,5 @@ def hash_file(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-if __name__ == '__main__':
-    data_path = Path('data/financial_phrasebank.csv')
-    print(hash_file(data_path))
+# if __name__ == '__main__':
+#     data_path = Path('data/financial_phrasebank.csv')
