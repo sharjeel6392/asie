@@ -5,9 +5,8 @@ from datetime import datetime
 import copy
 
 from src.experiments.schemas import ExperimentResult
-from src.logger import logging
+from src.logger import configure_logger
 from src.constants import REGISTRY_PATH
-
 
 def load_registry() -> dict:
     if not os.path.exists(REGISTRY_PATH):
@@ -19,7 +18,7 @@ def load_registry() -> dict:
     
     with open(REGISTRY_PATH) as f:
         return yaml.safe_load(f) or {
-            "production": None,
+            "primary": None,
             "shadow": None,
             "history": []
             }
@@ -40,7 +39,7 @@ def register_shadow_model(result: ExperimentResult) -> bool:
     - overwrites existing shadow model
     - appens to history with timestamp and metadata
     """
-
+    logger = configure_logger()
     registry = load_registry()
     new_f1 = result.get('metrics',{}).get('eval_f1', 0)
 
@@ -50,7 +49,7 @@ def register_shadow_model(result: ExperimentResult) -> bool:
         current_f1 = current_shadow['metrics'].get('eval_f1',0)
 
         if new_f1 <= current_f1:
-            logging.info('New model is worse than current shadow. Skipping update.')
+            logger.info('New model is worse than current shadow. Skipping update.')
             return False
 
     entry = {

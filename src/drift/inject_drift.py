@@ -1,6 +1,5 @@
 import random
 import requests
-import time
 
 SLANG_MAP = {
     "company": "stonk",
@@ -54,9 +53,6 @@ def simulate_drift(texts):
     for text in texts:
         drifted = distort_text(text)
 
-        print(f"Original text: {text}")
-        print(f"Drifted: {drifted}")
-
         res = send_request(drifted)
 
         results.append(res)
@@ -64,27 +60,27 @@ def simulate_drift(texts):
     return results
 
 
-if __name__ == '__main__':
-    texts = ["The company reported strong quarterly earnings",
-        "Revenue increased by 12 percent year over year",
-        "The firm announced a dividend payout for shareholders",
-        "Operating margins improved due to cost optimization",
-        "The stock showed steady growth over the past quarter",
-        "Management expects moderate growth in the next fiscal year",
-        "The company reduced its debt significantly",
-        "Earnings per share exceeded analyst expectations",
-        "The firm is expanding into new international markets",
-        "The quarterly results indicate stable financial performance",
-        "The company maintains a strong balance sheet",
-        "Investor confidence remains high for this sector",
-        "The firm reported consistent revenue growth",
-        "The business outlook remains positive for the coming year",
-        "The company announced a strategic acquisition",
-        "The organization is focusing on long-term profitability",
-        "Cash flow from operations remains strong",
-        "The company continues to invest in research and development",
-        "The firm has a stable earnings trajectory",
-        "The industry outlook remains favorable"
-    ]
-    for text in texts:
-        send_request(text)
+# if __name__ == '__main__':
+#     texts = ["The company reported strong quarterly earnings",
+#         "Revenue increased by 12 percent year over year",
+#         "The firm announced a dividend payout for shareholders",
+#         "Operating margins improved due to cost optimization",
+#         "The stock showed steady growth over the past quarter",
+#         "Management expects moderate growth in the next fiscal year",
+#         "The company reduced its debt significantly",
+#         "Earnings per share exceeded analyst expectations",
+#         "The firm is expanding into new international markets",
+#         "The quarterly results indicate stable financial performance",
+#         "The company maintains a strong balance sheet",
+#         "Investor confidence remains high for this sector",
+#         "The firm reported consistent revenue growth",
+#         "The business outlook remains positive for the coming year",
+#         "The company announced a strategic acquisition",
+#         "The organization is focusing on long-term profitability",
+#         "Cash flow from operations remains strong",
+#         "The company continues to invest in research and development",
+#         "The firm has a stable earnings trajectory",
+#         "The industry outlook remains favorable"
+#     ]
+#     for text in texts:
+#         send_request(text)

@@ -18,5 +18,5 @@ def get_promoted_model():
         reverse = True
     )
 
-if __name__ == '__main__':
-    print(get_promoted_model())
+# if __name__ == '__main__':
+#     print(get_promoted_model())

@@ -2,30 +2,30 @@ from transformers import AutoTokenizer
 import pandas as pd
 import os
 
-from src.logger import logging
+from src.logger import configure_logger
 from src.utils.load_data import load_data
 from src.utils.save_data import save_data
 from src.constants import PREPROCESSED_DATA_DIR, TRAIN_DATA_FILE, VAL_DATA_FILE, RAW_DATA_DIR
-
 
 def preprocess_data(params: dict) -> AutoTokenizer:
     """
         Preprocess the data
     """
+    logger = configure_logger()
     try:
-        logging.debug('Pre-processing...')
+        logger.debug('Pre-processing...')
 
         model_name = params['model_name']
         max_length = params['max_length']
 
         train_df = load_data(data_path=os.path.join(RAW_DATA_DIR, TRAIN_DATA_FILE))
         if train_df is None:
-            logging.error('Loaded test dataframe is None. Aborting preprocessing.')
+            logger.error('Loaded test dataframe is None. Aborting preprocessing.')
             raise ValueError('Loaded train dataframe is Empty.')
 
         val_df = load_data(data_path = os.path.join(RAW_DATA_DIR, VAL_DATA_FILE))
         if val_df is None:
-            logging.error('Loaded validation dataframe is None. Aborting preprocessing.')
+            logger.error('Loaded validation dataframe is None. Aborting preprocessing.')
             raise ValueError('Loaded validation dataframe is None.')
 
         tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -49,11 +49,11 @@ def preprocess_data(params: dict) -> AutoTokenizer:
         train_df.rename(columns={'labels': 'label'})
         val_df.rename(columns={'labels': 'label'})
 
-        logging.debug('Pre-processing completed.')
+        logger.debug('Pre-processing completed.')
 
         save_data(train_df, val_df, PREPROCESSED_DATA_DIR)
         return tokenizer
         
     except Exception as e:
-        logging.error(f'Unexpected error occured while preprocessing: {e}')
+        logger.error(f'Unexpected error occured while preprocessing: {e}')
         raise

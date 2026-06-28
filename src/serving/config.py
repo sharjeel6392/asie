@@ -1,13 +1,25 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class Settings:
     # Required
-    MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
-    MODEL_RUN_ID = os.getenv("MODEL_RUN_ID")
+    # Resolve absolute paths natively regardless of worker execution directory
+    DEFAULT_DB_PATH = os.path.join(os.path.expanduser("~"), "mlflow.db")
 
+    _raw_uri = os.getenv("MLFLOW_TRACKING_URI")
+    if _raw_uri:
+        # Enforce exactly 4 forward slashes for absolute local SQLite URIs
+        if _raw_uri.startswith("sqlite:///") and not _raw_uri.startswith("sqlite:////"):
+            MLFLOW_TRACKING_URI = _raw_uri.replace("sqlite:///", "sqlite:////")
+        else:
+            MLFLOW_TRACKING_URI = _raw_uri
+    else:
+        MLFLOW_TRACKING_URI = f"sqlite:////{DEFAULT_DB_PATH}"
+
+    MODEL_RUN_ID = os.getenv("MODEL_RUN_ID")
     DRIFT_STORE = os.getenv("DRIFT_STORE", "sqlite")
 
     # Optional, with defaults
