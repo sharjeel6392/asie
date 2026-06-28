@@ -3,7 +3,7 @@
 ![MLflow](https://img.shields.io/badge/MLflow-tracking-blue)
 ![DVC](https://img.shields.io/badge/Data-DVC-orange)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688)
-![Airflow-%5BWIP%5D](https://img.shields.io/badge/Orchestration-Airflow--%5BWIP%5D-017CEE)
+![Airflow](https://img.shields.io/badge/Orchestration-Airflow-017CEE)
 ![AWS EKS](https://img.shields.io/badge/AWS-EKS-orange)
 ![Terraform](https://img.shields.io/badge/IaC-Terraform-purple)
 ![ArgoCD-%5BWIP%5D](https://img.shields.io/badge/GitOps-ArgoCD--%5BWIP%5D-orange)
@@ -17,8 +17,9 @@
 4. [System Architecture](#-system-architecture)
 5. [Operational Tooling](#-operational-tooling--asiesh)
 6. [How to Use ASIE](#-how-to-use-asie)
-7. [Benefits of ASIE](#-benefits-of-asie)
-8. [Work in Progress](#-work-in-progress)
+7. [Automated Retraining](#-automated-retraining)
+8. [Benefits of ASIE](#-benefits-of-asie)
+9. [Work in Progress](#-work-in-progress)
 
 ## 🚀 Product Overview
 
@@ -52,7 +53,7 @@ ASIE's core value proposition lies in its ability to deliver:
 - <b> Helm: </b> Package management for Kubernetes deployments.
 - <b> Prometheus & Alertmanager: </b> Monitoring drift scores and triggering automated alerts.
 - <b> ArgoCD (GitOps): </b><i>[WIP]</i> Automating model rollouts and environment consistency.
-- <b> Apache Airflow: </b> <i>[WIP]</i> Orchestrating the end-to-end retraining pipeline.
+- <b> Apache Airflow: </b> Orchestrating the drift-gated retraining pipeline with scheduled and event-driven DAG execution.
 
 ## 🎯 Key Capabilities
 
@@ -69,6 +70,7 @@ ASIE offers a suite of features engineered for MLOps maturity:
 - **Multi-Signal Drift Detection**: A time-windowed drift detection engine that monitors input distribution, output label distribution, confidence score shifts, and shadow model disagreement —  enabling proactive detection of model degradation before accuracy metrics are available.
 - **Event-Driven Alerting Pipeline**: Drift metrics are exposed to Prometheus, evaluated against defined alert thresholds, routed through Alertmanager, and delivered to a structured webhook endpoint — transforming passive drift signal into actionable, extensible system events.
 - **Safe Shadow Deployment**: Enabling silent execution of new model versions alongside primary models for performance comparison and risk mitigation without impacting live traffic.
+- **Drift-Gated Automated Retraining**: An Airflow-orchestrated retraining pipeline that evaluates the latest drift score before committing compute, skipping unnecessary runs and executing full experiment-selection-promotion-export cycles only when production data has meaningfully shifted.
 
 ## 🏗 System Architecture
 
@@ -668,6 +670,130 @@ After establishing the tunnel, the inference service will be accessible locally:
       "latency_ms": 12.5
     }
     ```
+
+## 🔄 Automated Retraining
+
+ASIE implements a drift-aware, event-driven closed-loop retraining system. Rather than retraining on a fixed schedule regardless of model health, the system continuously monitors production behavior and retrains only when meaningful drift is detected — making retraining intentional, reproducible, and resource-efficient.
+
+### System Flow
+
+![alt text](images/system_flow.png "System Flow")
+
+### Retraining Orchestrator
+
+The retraining pipeline is the single entry point for all model updates. It does not replace the models directly — it coordinates the decision about whether a replacement is warranted. The orchestrator enforces a strict execution order:
+
+```
+run_experiments
+       ↓
+select_best_model
+       ↓
+decision gate (is it worth updating?)
+       ↓
+register_shadow_model
+       ↓
+export_models (only if state changed)
+```
+
+The orchestrator executes experiments, selects the best candidate, delegates quality decisions to the registry, and triggers export only when state actually changes. It does not decide model quality in isolation and does not overwrite system state blindly.
+
+### Airflow DAG — Drift-Gated Execution
+
+The retraining workflow is orchestrated as an Airflow DAG with two sequential tasks:
+
+**Task 1 — `check_drift`**
+
+Retrieves the latest drift score from the drift metrics database and compares it against a configurable threshold. If the score falls below the threshold, the task raises an `AirflowSkipException` and all downstream tasks are skipped automatically, consuming no compute resources. If the score exceeds the threshold, execution continues.
+
+| Latest Drift Score | Threshold | DAG Behavior |
+| --- | --- | --- |
+| 0.08 | 0.20 | Retraining skipped |
+| 0.15 | 0.20 | Retraining skipped |
+| 0.21 | 0.20 | Retraining executed |
+| 0.43 | 0.20 | Retraining executed |
+
+**Task 2 — `retrain_pipeline`**
+
+When drift is detected, Airflow invokes the full retraining pipeline:
+
+1. Execute one or more training experiments with different hyperparameter configurations.
+2. Evaluate each candidate model.
+3. Select the highest-performing model based on evaluation metrics.
+4. Compare the selected model against the currently registered shadow model.
+5. Update the model registry if the candidate satisfies promotion criteria.
+6. Export the latest primary and shadow models for downstream inference services.
+
+Each experiment is tracked in MLflow, providing complete reproducibility of parameters, metrics, artifacts, and model lineage.
+
+**Scheduling**
+
+The DAG runs on a daily schedule (`schedule="@daily"`). Airflow determines *when* the workflow runs; the drift detector determines *whether* retraining should occur. This separation avoids unnecessary model training while ensuring continuous production monitoring.
+
+```
+Airflow (@daily)
+       ↓
+check_drift
+       ↓
+retrain_pipeline (if drift detected)
+```
+
+**Fault Tolerance**
+
+Because each stage is encapsulated as an Airflow task, failures are isolated and can be investigated directly through the Airflow interface without modifying pipeline code. The system provides automatic task state tracking, configurable retry policies, centralized execution logs, DAG visualization, and manual rerun support for failed tasks.
+
+### Drift-Gated Architecture
+
+The monitoring and orchestration layers remain strictly separated. The drift worker continuously computes and persists drift scores to SQLite; the Airflow DAG simply queries the latest persisted value. No drift recomputation occurs at orchestration time.
+
+![alt text](images/drift-gated_architecture.png "Drift-gated architecrure")
+
+### `should_retrain()` Logic
+
+Beyond the simple threshold check, the decision layer evaluates four conditions before committing to a retraining run:
+
+```python
+# Cooldown guard
+if now - last_retrain_time < 6 hours:
+    return False
+
+# Drift threshold
+if drift_score < 0.5:
+    return False
+
+# Data availability
+if new_data_count < MIN_ROWS:
+    return False
+
+# Performance degradation
+if current_model_performance > threshold:
+    return False
+```
+
+All four conditions must pass for retraining to proceed.
+
+### Promotion Triggers
+
+Once a shadow model has been running in parallel with the primary, promotion is evaluated using one of three strategies:
+
+- **Time-based**: promote after the shadow has accumulated sufficient runtime.
+- **Metric-based**: promote when shadow evaluation metrics exceed the primary's.
+- **Online comparison**: promote based on live disagreement rates and confidence delta observed during parallel inference.
+
+### Running the Retraining DAG
+
+**Trigger manually from the CLI:**
+```bash
+airflow dags trigger asie_retraining_pipeline
+```
+
+**Or from the Airflow UI** at `http://localhost:8080` — navigate to `asie_retraining_pipeline` and use the trigger button.
+
+**Start the orchestration services:**
+```bash
+bash start_asie_orch.sh
+```
+
+This activates the correct environment, configures AIRFLOW_HOME, sets the MLflow tracking URI, and launches both the Airflow scheduler and webserver.
 
 ## ✨ Benefits of ASIE
 
