@@ -1,7 +1,7 @@
 from sklearn.model_selection import train_test_split
 import pandas as pd
 
-from src.logger import logging
+from src.logger import configure_logger
 from src.utils.load_data import load_data
 from src.utils.save_data import save_data
 from src.constants import TRUE_DATA_FILE, RAW_DATA_DIR
@@ -16,8 +16,9 @@ def ingest_data(cfg: dict) -> pd.DataFrame:
     :type data_url: str
     :return: None
     """
+    logger = configure_logger()
     try:
-        logging.debug('Ingesting data...')
+        logger.debug('Ingesting data...')
         df = load_data(data_path=TRUE_DATA_FILE)
         
         for col in REQUIRED_COLUMNS:
@@ -34,10 +35,10 @@ def ingest_data(cfg: dict) -> pd.DataFrame:
             raise ValueError('Labels must be in range [0, 2]')
 
         train_df, val_df = train_test_split(df, test_size= cfg['test_size'], random_state = cfg['seed'])
-        logging.debug('Data ingestion completed.')
+        logger.debug('Data ingestion completed.')
         save_data(train_df, val_df, data_path=RAW_DATA_DIR)
-        logging.info(f'Train and validation data saved to {RAW_DATA_DIR}')
+        logger.info(f'Train and validation data saved to {RAW_DATA_DIR}')
         return df
     except Exception as e:
-        logging.error(f'Failed to complete the data ingestion process: {e}')
+        logger.error(f'Failed to complete the data ingestion process: {e}')
         raise

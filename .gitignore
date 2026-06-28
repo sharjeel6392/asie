@@ -4,6 +4,7 @@ logs/
 mlruns/
 runs/
 data/
+.venv/
 venv/
 mlflow.db
 __pycache__/
@@ -24,3 +25,6 @@ asie.egg-info/
 eks/tmp-cluster.yaml
 .helmignore
 drift.db
+.vscode/
+temp_airflow_run.txt
+airflow/airflow.db
