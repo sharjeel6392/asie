@@ -4,6 +4,9 @@ from datetime import datetime
 import logging
 import os
 import sys
+from airflow.exceptions import AirflowSkipException
+from src.constants import DRIFT_THRESHOLD
+
 
 # Force the correct environment for all tasks in this DAG
 os.environ["MLFLOW_TRACKING_URI"] = "sqlite:////home/kirksalvator/mlflow.db"
@@ -15,19 +18,19 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.pipelines.retraining_pipeline import retraining_pipeline
+from src.drift.storage.drift_metrics_repository import get_latest_drift_metric
 
-# Dummy drift check (replace with real logic later)
+
 def check_drift(**context):
-    drift_score = 0.85 # simulate
+    drift_score = get_latest_drift_metric()
+    if drift_score is not None:
+        logging.info(f'Latest drift score: {drift_score}')
 
-    threshold = 0.7
-
-    if drift_score > threshold:
-        logging.info("Drift detected. Triggering retraining!")
-        return True
+        if drift_score < DRIFT_THRESHOLD:
+            raise AirflowSkipException(f'No significant drift detected (score: {drift_score}). Skipping retraining.')
+        logging.info(f'Drift detected (score: {drift_score}). Continue retraining')
     else:
-        logging.info("No significant drfit.")
-        return False
+        raise AirflowSkipException('No drift metrics available')
     
 def run_retraining(**context):
     """Run the retraining pipeline with detailed logging."""

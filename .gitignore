@@ -26,3 +26,5 @@ eks/tmp-cluster.yaml
 .helmignore
 drift.db
 .vscode/
+temp_airflow_run.txt
+airflow/airflow.db
