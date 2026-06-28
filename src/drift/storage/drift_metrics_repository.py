@@ -39,7 +39,7 @@ def insert_drift_metric(final_drift_score: float):
     conn.commit()
     conn.close()
 
-def get_latest_drift_metric() -> float:
+def get_latest_drift_metric() -> float | None:
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -57,7 +57,7 @@ def get_latest_drift_metric() -> float:
 
     if row:
         return row[0]
-    return 0.0
+    return None
 
 # if __name__ =='__main__':
 #     init_drift_db()

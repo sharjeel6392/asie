@@ -24,3 +24,5 @@ REGISTRY_PATH = './model/model_registry.yaml'
 MLRUNS_DIR = './mlruns'
 
 MAX_BATCH_SIZE = 32
+
+DRIFT_THRESHOLD = 0.2
