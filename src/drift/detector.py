@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.stats import ks_2samp
 
-def compute_feature_drft(reference_df, current_df) -> dict:
+def compute_feature_drift(reference_df, current_df) -> dict:
     drift_scores = {}
     
     for col in reference_df.columns:
@@ -41,7 +41,7 @@ def compute_prediction_drift(ref_preds, cur_preds) -> float:
 
 def compute_drift(reference_df, current_df, ref_preds, cur_preds) -> dict:
     # compute feature drift
-    feature_drift = compute_feature_drft(reference_df, current_df)
+    feature_drift = compute_feature_drift(reference_df, current_df)
     feature_score = aggregate_drift_scores(feature_drift)
 
     # compute prediction drift

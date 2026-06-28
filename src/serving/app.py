@@ -9,7 +9,7 @@ from prometheus_client import Gauge, generate_latest
 from src.serving.schema import PredictRequest, PredictResponse
 from src.serving.model_loader import ModelLoader
 from src.serving.predictor import Predictor
-from src.logger import logging
+from src.logger import configure_logger
 from src.serving.config import Settings
 from src.serving.inference_log_DB.database import init_db
 from src.drift.storage.drift_metrics_repository import init_drift_db as storage_db
@@ -38,11 +38,12 @@ def startup_event():
     - Memory is prepared
     - Server is warm
     '''
+    logger = configure_logger()
     global predictor, loader
-    logging.info(f'Connecting to the inference db...')
+    logger.info(f'Connecting to the inference db...')
     connected = init_db()
     if connected == False:
-        logging.error("No connection to the inference log db")
+        logger.error("No connection to the inference log db")
         raise
     
     loader = ModelLoader(
@@ -76,6 +77,7 @@ async def predict(req: PredictRequest):
     '''
     Prediction endpoint; a public interface
     '''
+    logger = configure_logger()
     if predictor is None:
         raise HTTPException(status_code=503, detail = 'Model not loaded')
     try:
@@ -90,7 +92,7 @@ async def predict(req: PredictRequest):
         primary_per_sample_latency = latency_ms / len(primary_predictions)
     
     except Exception as e:
-        logging.critical(f'Primary model failed to load: {e}')
+        logger.critical(f'Primary model failed to load: {e}')
         raise # Hard Fail
 
     # ----------------------------------------
@@ -108,7 +110,7 @@ async def predict(req: PredictRequest):
             shadow_latency = shadow_preds['latency_ms']
             shadow_per_sample_latency = shadow_latency / len(shadow_predictions)            
         except Exception as e:
-            logging.error(f'Shadow failed: {e}')
+            logger.error(f'Shadow failed: {e}')
             shadow_predictions = [None] * len(req.text)
             shadow_per_sample_latency = None
 
