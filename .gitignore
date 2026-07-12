@@ -1,30 +1,67 @@
+# Local environments
+.venv/
+venv/
+env/
+
+# Python caches and packaging outputs
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Runtime outputs
 artifacts/
-docs/
 logs/
 mlruns/
 runs/
-data/
-.venv/
-venv/
 mlflow.db
-__pycache__/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+temp_airflow_run.txt
+
+# Data and model artifacts
+data/
 model/
-src/UNKNOW*
+exported_model/
 !*.dvc
 !data/data_manifest.yaml
 !model/model_registry.yaml
+
+# Local orchestration state
+airflow/
+airflow-home/
+eks/tmp-cluster.yaml
+
+# Secrets and local env files
 /.env
-/exported_model/
-asie-key-pair.pem*
-asie-plan.tfplan
-.terraform
+/.env.*
+!/.env.example
+*.pem
+*.pem.pub
+
+# Terraform local state and cache
+.terraform/
+**/.terraform/
 .terraform.lock.hcl
+**/.terraform.lock.hcl
 terraform.tfstate
 terraform.tfstate.backup
-asie.egg-info/
-eks/tmp-cluster.yaml
-.helmignore
-drift.db
+**/terraform.tfstate
+**/terraform.tfstate.backup
+*.tfplan
+*tfplan*
+asie-plan.tfplan
+plan-outputs/
+
+# Local editor files
 .vscode/
-temp_airflow_run.txt
-airflow/airflow.db
+.idea/
+.helmignore
+
+# Legacy stray package output
+src/UNKNOW*

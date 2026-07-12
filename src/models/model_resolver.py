@@ -1,12 +1,14 @@
 import yaml
+from src.constants import MODEL_REGISTRY_FILE, PROMOTED_MODEL_STATE
+
 
 def get_promoted_model():
-    with open('model/model_registry.yaml') as f:
+    with open(MODEL_REGISTRY_FILE) as f:
         registry = yaml.safe_load(f)
 
     promoted = [
         m for m in registry['models']
-        if m['state'] == 'promoted'
+        if m['state'] == PROMOTED_MODEL_STATE
     ]
 
     if not promoted:

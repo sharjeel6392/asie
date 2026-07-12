@@ -1,17 +1,17 @@
 import sqlite3
 from pathlib import Path
+from src.constants import INFERENCE_DB_PATH, INFERENCE_SCHEMA_PATH
 
-DB_PATH = Path('data/inference.db')
 
 def get_connection():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    return sqlite3.connect(DB_PATH)
+    INFERENCE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return sqlite3.connect(INFERENCE_DB_PATH)
 
 def init_db() -> bool:
     conn = get_connection()
     if conn == False:
         return False
-    with open("./src/serving/inference_log_DB/schema.sql") as f:
+    with open(INFERENCE_SCHEMA_PATH) as f:
         conn.executescript(f.read())
     
     conn.commit()

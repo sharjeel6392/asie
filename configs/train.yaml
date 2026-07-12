@@ -5,4 +5,3 @@ test_size: 0.2
 lr: 2e-5
 max_length: 128
 seed: 42
-experiment_name: ASIE_Week1

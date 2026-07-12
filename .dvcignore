@@ -1,3 +1,25 @@
 # Add patterns of files dvc should ignore, which could improve
 # the performance. Learn more at
 # https://dvc.org/doc/user-guide/dvcignore
+
+.venv/
+venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+mlruns/
+runs/
+logs/
+artifacts/
+model/
+exported_model/
+airflow/
+airflow-home/
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.db
+*.sqlite
+*.sqlite3

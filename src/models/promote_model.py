@@ -1,19 +1,25 @@
 import yaml
 from datetime import datetime
+from src.constants import (
+    DATASET_VERSION,
+    DEFAULT_MODEL_NAME,
+    MODEL_REGISTRY_FILE,
+    PROMOTED_MODEL_STATE,
+)
 
 def promote(run_id, metrics, dataset):
-    registry_path = "model/model_registry.yaml"
+    registry_path = MODEL_REGISTRY_FILE
 
     with open(registry_path) as f:
         registry = yaml.safe_load(f) or {'models': []}
     
     entry = {
-        'name': 'asie-sentiment',
-        'version': 'v1',
+        'name': DEFAULT_MODEL_NAME,
+        'version': DATASET_VERSION,
         'run_id': run_id,
         'dataset': dataset,
         'metrics': metrics,
-        'state': 'promoted',
+        'state': PROMOTED_MODEL_STATE,
         'created_at': datetime.now().isoformat(),
     }
 

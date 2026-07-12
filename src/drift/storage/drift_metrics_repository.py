@@ -6,8 +6,9 @@ import sqlite3
 from datetime import datetime
 import os
 from src.logger import configure_logger
+from src.constants import DRIFT_DB_PATH, DRIFT_SCHEMA_PATH
 
-DB_PATH = "drift.db"
+DB_PATH = DRIFT_DB_PATH
 
 def get_connection():
     return sqlite3.connect(DB_PATH)
@@ -16,7 +17,7 @@ def init_drift_db():
     conn = get_connection()
     cursor = conn.cursor()
 
-    with open("src/drift/storage/schema.sql", "r") as f:
+    with open(DRIFT_SCHEMA_PATH, "r") as f:
         cursor.executescript(f.read())
 
     conn.commit()
