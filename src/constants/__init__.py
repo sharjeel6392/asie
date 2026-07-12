@@ -29,7 +29,7 @@ MODEL_REGISTRY_FILE = f"{MODEL_REGISTRY_DIR}/model_registry.yaml"
 MODEL_DIR_NAME = "model"
 TOKENIZER_FILE = "tokenizer"
 TOKENIZER_DIR_NAME = "tokenizer"
-EXPERIMENT_NAME = "ASIE_Week1"
+EXPERIMENT_NAME = "ASIE_Experiment"
 DEFAULT_MODEL_NAME = "asie-sentiment"
 DEFAULT_SHADOW_MODEL_NAME = "asie-sentiment-shadow"
 

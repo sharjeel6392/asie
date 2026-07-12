@@ -71,7 +71,7 @@ class HFTransformerModel:
                 logging_steps=50,
 
                 # ✅ Eval
-                evaluation_strategy="epoch",
+                eval_strategy="epoch",
 
                 # ✅ Disable external integrations
                 report_to="none",

@@ -11,12 +11,13 @@ from src.logger import configure_logger
 from src.data_manipulation.data_ingestion import ingest_data
 from src.data_manipulation.data_preprocessing import preprocess_data
 from src.models.model_building import train_model
+from src.serving.config import Settings
 from src.utils.load_params import load_params
 from src.utils.reproducibility import set_seed, capture_env
 from src.serving.config import Settings
 from src.models.model_eval import evaluate_model
 from src.experiments.schemas import ExperimentResult
-from src.constants import PARAMS_FILE, ARTIFACTS_DIR, ARTIFACTS_FILE, TOKENIZER_FILE
+from src.constants import PARAMS_FILE, ARTIFACTS_DIR, ARTIFACTS_FILE, TOKENIZER_FILE, EXPERIMENT_NAME
 
 def hash_df(df: pd.DataFrame) -> str:
     """
@@ -113,9 +114,9 @@ def _prepare_data(cfg) -> tuple[pd.DataFrame, dict, str]:
     data_hash = hash_df(df)
     return df, stats, data_hash
 
-# def _setup_mlflow(cfg) -> None:
-#     mlflow.set_tracking_uri(Settings.MLFLOW_TRACKING_URI)
-#     mlflow.set_experiment(cfg['experiment_name'])
+def _setup_mlflow(cfg) -> None:
+    mlflow.set_tracking_uri(Settings.MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(EXPERIMENT_NAME)
 
 def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
     """
@@ -156,7 +157,7 @@ def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
                 if v is not None:
                     cfg[k] = v
 
-        # _setup_mlflow(cfg)
+        _setup_mlflow(cfg)
         
         logger.debug(f"Connected to MLflow at: {mlflow.get_tracking_uri()}")
 
@@ -184,7 +185,10 @@ def run_pipeline(overrides: dict | None = None) -> ExperimentResult:
         # ===========================================================
         # Model Training and Parameter logging with mlflow
         # ===========================================================
+        logger.info("MLflow configured: tracking_uri=%s, experiment=%s",
+        mlflow.get_tracking_uri(), Settings.MLFLOW_EXPERIMENT_NAME)
         with mlflow.start_run() as run:
+            
             model_temp_path, metrics = train_model(cfg)
             metrics = normalize_metrics(metrics)
             evaluation = evaluate_model(metrics, threshold = 0.75)
