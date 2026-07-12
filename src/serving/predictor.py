@@ -2,7 +2,7 @@
 
 import time
 import torch
-from src.constants import MAX_BATCH_SIZE
+from src.constants import MAX_BATCH_SIZE, PRIMARY_MODEL_ROLE, SHADOW_MODEL_ROLE
 from src.logger import configure_logger
 
 class Predictor:
@@ -19,7 +19,7 @@ class Predictor:
     def __init__(self, loader):
         self.loader = loader
     
-    def predict(self, text, model_type: str = 'primary'):
+    def predict(self, text, model_type: str = PRIMARY_MODEL_ROLE):
         logger = configure_logger()
         
         if isinstance(text, str):
@@ -34,10 +34,10 @@ class Predictor:
         if not self.loader.is_ready():
             raise RuntimeError('Model not loaded')
         
-        if model_type == 'primary':
+        if model_type == PRIMARY_MODEL_ROLE:
             model = self.loader.primary_model
             tokenizer = self.loader.primary_tokenizer
-        elif model_type == 'shadow':
+        elif model_type == SHADOW_MODEL_ROLE:
             model = self.loader.shadow_model
             tokenizer = self.loader.shadow_tokenizer
         else:

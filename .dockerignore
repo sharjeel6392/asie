@@ -1,21 +1,53 @@
+# Git and editor noise
+.git/
+.vscode/
+.idea/
+
 # Python / local env
+.venv/
 venv/
+env/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
 
-# MLflow & artifacts
+# MLflow, training outputs, and local models
 artifacts/
 runs/
 mlruns/
 mlflow/
+model/
 
-# Data (except manifest)
+# Data: keep manifests and DVC pointers only
 data/*
 !data/data_manifest.yaml
+!data/*.dvc
 
-# Logs & pipelines
+# Logs and local orchestration state
 logs/
 pipelines/
+airflow/
+airflow-home/
+dags/
+temp_airflow_run.txt
 
-# Secrets
+# Secrets and local databases
 .env
+.env.*
+*.pem
+*.pem.pub
+*.db
+*.sqlite
+*.sqlite3
+
+# Terraform local state and cache
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*tfplan*
+plan-outputs/

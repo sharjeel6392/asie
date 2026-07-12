@@ -17,16 +17,37 @@ from src.serving.inference_log_DB.repository import log_inference
 from src.drift.worker import run_drift_job
 from src.drift.storage.drift_metrics_repository import get_latest_drift_metric
 from src.events.transformer import transform_alert_to_event
+from src.constants import (
+    API_TITLE,
+    DEFAULT_DRIFT_WINDOW_HOURS,
+    DEFAULT_INFERENCE_DEVICE,
+    DRIFT_METRIC_DESCRIPTION,
+    DRIFT_METRIC_NAME,
+    DRIFT_ROUTE,
+    DRIFT_WEBHOOK_ROUTE,
+    HEALTH_ROUTE,
+    METRICS_ROUTE,
+    MODEL_CLASS_NAME,
+    PREDICT_ROUTE,
+    PRIMARY_MODEL_ROLE,
+    PRIMARY_MODEL_VERSION,
+    PROMETHEUS_TEXT_MEDIA_TYPE,
+    REQUEST_SOURCE_API,
+    SERVED_MODEL_VERSION,
+    SHADOW_MODEL_ROLE,
+    SHADOW_MODEL_VERSION,
+    WEBHOOK_ROUTE,
+)
 
 
-app = FastAPI(title= 'ASIE Serving API')
-loader = ModelLoader(device="cpu")
+app = FastAPI(title= API_TITLE)
+loader = ModelLoader(device=DEFAULT_INFERENCE_DEVICE)
 predictor = None
 storage_db()
 
 drift_gauge = Gauge(
-    "asie_data_drift_score",
-    "Aggregated drift score (feature + prediction drift)"
+    DRIFT_METRIC_NAME,
+    DRIFT_METRIC_DESCRIPTION
 )
 
 @app.on_event('startup')
@@ -53,7 +74,7 @@ def startup_event():
     loader.load()
     predictor = Predictor(loader = loader)
 
-@app.get('/health')
+@app.get(HEALTH_ROUTE)
 def health():
     '''
     This will be used for:
@@ -72,7 +93,7 @@ def health():
 
 
 
-@app.post('/predict', response_model=PredictResponse)
+@app.post(PREDICT_ROUTE, response_model=PredictResponse)
 async def predict(req: PredictRequest):
     '''
     Prediction endpoint; a public interface
@@ -85,7 +106,7 @@ async def predict(req: PredictRequest):
         # Primary Inference
         # ----------------------------------------
         
-        primary_pred = predictor.predict(req.text, "primary")
+        primary_pred = predictor.predict(req.text, PRIMARY_MODEL_ROLE)
         primary_predictions = primary_pred['predictions']
         latency_ms = primary_pred['latency_ms']
 
@@ -105,7 +126,7 @@ async def predict(req: PredictRequest):
     if loader.shadow_model is not None:
         shadow_enabled = True
         try:
-            shadow_preds = predictor.predict(req.text, "shadow")
+            shadow_preds = predictor.predict(req.text, SHADOW_MODEL_ROLE)
             shadow_predictions = shadow_preds['predictions']
             shadow_latency = shadow_preds['latency_ms']
             shadow_per_sample_latency = shadow_latency / len(shadow_predictions)            
@@ -139,14 +160,14 @@ async def predict(req: PredictRequest):
             "input_length": len(text),
             "true_label": None,
 
-            "primary_model_name": "DistilBertForSequenceClassification",
-            "primary_model_version": "v_01",
+            "primary_model_name": MODEL_CLASS_NAME,
+            "primary_model_version": PRIMARY_MODEL_VERSION,
             "primary_prediction": primary['label'],
             "primary_confidence": primary['score'],
             "primary_latency_ms": primary_per_sample_latency,
 
-            "shadow_model_name": "DistilBertForSequenceClassification" if shadow_enabled else None,
-            "shadow_model_version": 'v_02' if shadow_enabled else None,
+            "shadow_model_name": MODEL_CLASS_NAME if shadow_enabled else None,
+            "shadow_model_version": SHADOW_MODEL_VERSION if shadow_enabled else None,
             "shadow_predictions": shadow['label'] if shadow else None,
             "shadow_confidence": shadow['score'] if shadow else None,
             "shadow_latency_ms": shadow_per_sample_latency,
@@ -154,29 +175,29 @@ async def predict(req: PredictRequest):
             "disagreement": disagreement,
             "abs_diff": abs_diff,
 
-            "request_source": "api"
+            "request_source": REQUEST_SOURCE_API
         }
         log_inference(record)
 
     return PredictResponse(
         predictions = primary_pred['predictions'],
         latency_ms= primary_pred['latency_ms'],
-        model_version= 'v0'
+        model_version= SERVED_MODEL_VERSION
     )
 
-@app.get("/drift")
+@app.get(DRIFT_ROUTE)
 def get_drift():
-    result = run_drift_job(window_hours=24)
+    result = run_drift_job(window_hours=DEFAULT_DRIFT_WINDOW_HOURS)
     return result
 
-@app.get("/metrics")
+@app.get(METRICS_ROUTE, response_class=Response)
 def metrics():
     drift_value = get_latest_drift_metric()
     drift_gauge.set(drift_value)
 
-    return Response(generate_latest(), media_type="text/plain")
+    return Response(generate_latest(), media_type=PROMETHEUS_TEXT_MEDIA_TYPE)
 
-@app.post("/webhook")
+@app.post(WEBHOOK_ROUTE)
 async def webhook_receiver(request: Request):
     try:
         payload = await request.json()
@@ -188,7 +209,7 @@ async def webhook_receiver(request: Request):
 
     return {"status": "received"}
 
-@app.post("/webhook/drift")
+@app.post(DRIFT_WEBHOOK_ROUTE)
 async def drift_webhook(request: Request):
     payload = await request.json()
 
