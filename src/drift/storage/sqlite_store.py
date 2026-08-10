@@ -1,10 +1,9 @@
-import sqlite3
 import pandas as pd
-from src.serving.inference_log_DB.database import DB_PATH
+from src.serving.inference_log_DB.database import get_connection
 
 class SQLiteDriftStore:
     def _query(self, start_time: str, end_time: str) -> pd.DataFrame:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_connection()
 
         query = """
             SELECT *

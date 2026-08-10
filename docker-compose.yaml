@@ -44,7 +44,7 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/plugins/src  # Syncs your model logic
-      - ./requirements/inference.txt:/requirements.txt
+      - ./requirements/requirements_inference.txt:/requirements_inference.txt
     environment:
       - PYTHONPATH=${PYTHONPATH}:/opt/airflow/plugins
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor

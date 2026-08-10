@@ -496,13 +496,13 @@ python -m src.drift.worker --window_hours <hours>
 
 This processes all inference log entries within the specified window and computes all four drift signals: input distribution, output label distribution, confidence score shifts, and shadow model disagreement rate. Results are written to the impact analysis output for review.
 
-To validate the detection engine using synthetic drift injection:
+To validate the detection engine end-to-end using synthetic drift injection:
 
 ```bash
-python -m src.drift.inject_drift
+python -m src.drift.run_demo
 ```
 
-This injects controlled perturbation into a sample of inference inputs and confirms the engine responds with appropriate signal changes.
+This sends baseline, gradually-slang-drifted, and extreme-drift inference requests in sequence and prints the resulting drift score after each stage, confirming the engine responds with appropriate signal changes.
 
 ### Running the Alerts & Triggers Pipeline
 
