@@ -79,6 +79,7 @@ DRIFT_DB_PATH = "drift.db"
 DRIFT_SCHEMA_PATH = Path("src/drift/storage/schema.sql")
 DRIFT_METRIC_NAME = "asie_data_drift_score"
 DRIFT_METRIC_DESCRIPTION = "Aggregated drift score (feature + prediction drift)"
+DRIFT_THRESHOLD = 0.5  # matches Prometheus DriftWarning (prometheus/alerts.yml)
 DEFAULT_DRIFT_WINDOW_HOURS = 24
 DEFAULT_CLI_DRIFT_WINDOW_HOURS = 1
 DRIFT_MIN_SAMPLES = 10

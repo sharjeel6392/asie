@@ -6,10 +6,10 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 
-COPY requirements-inference.txt .
+COPY requirements/requirements_inference.txt .
 COPY pyproject.toml .
 
-RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements-inference.txt
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements_inference.txt
 
 
 COPY src/ ./src/

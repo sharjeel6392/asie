@@ -6,17 +6,17 @@ import copy
 
 from src.experiments.schemas import ExperimentResult
 from src.logger import configure_logger
-from src.constants import REGISTRY_PATH
+from src.constants import MODEL_REGISTRY_FILE
 
 def load_registry() -> dict:
-    if not os.path.exists(REGISTRY_PATH):
+    if not os.path.exists(MODEL_REGISTRY_FILE):
         return {
             "primary": None,
             "shadow": None,
-            "history": [] 
+            "history": []
             }
-    
-    with open(REGISTRY_PATH) as f:
+
+    with open(MODEL_REGISTRY_FILE) as f:
         return yaml.safe_load(f) or {
             "primary": None,
             "shadow": None,
@@ -24,13 +24,13 @@ def load_registry() -> dict:
             }
 
 def save_registry(registry: dict) -> None:
-    dir_name = os.path.dirname(REGISTRY_PATH)
+    dir_name = os.path.dirname(MODEL_REGISTRY_FILE)
 
     with tempfile.NamedTemporaryFile(mode='w', delete=False, dir=dir_name) as tmp:
         yaml.safe_dump(registry, tmp)
         temp_name = tmp.name
-    
-    os.replace(temp_name, REGISTRY_PATH)
+
+    os.replace(temp_name, MODEL_REGISTRY_FILE)
 
 def register_shadow_model(result: ExperimentResult) -> bool:
     """
