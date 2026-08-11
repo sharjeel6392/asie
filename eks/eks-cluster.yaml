@@ -35,12 +35,12 @@ managedNodeGroups:
       - <YOUR_PRIVATE1_SUBNET_ID>
       - <YOUR_PRIVATE2_SUBNET_ID>
 
-    ssh:
-      allow: true
-      publicKeyName: asie-key-pair
-
     iam:
       withAddonPolicies:
         autoScaler: true
         albIngress: true
         cloudWatch: true
+        # Enables AWS Systems Manager Session Manager for node shell access —
+        # replaces the bastion + SSH key pair (aws-provision/modules/ec2,
+        # removed Day 2). No key material to manage or leak.
+        ssm: true
