@@ -1,7 +1,7 @@
 # ASIE — AWS Target Architecture
 
 **Week 11 · Day 1 of 7 — AWS Architecture Planning**
-Region: `ap-south-1` · Status: Active · 2026-08-10
+Region: `ap-south-1` · Status: Active · 2026-08-10 · Last updated 2026-08-11 (Day 2 provisioned)
 
 Moving ASIE off a single-host Docker Compose setup onto a fully AWS-hosted platform — inference serving, orchestration, and monitoring all running in-cluster, nothing left on a laptop.
 
@@ -76,7 +76,7 @@ flowchart TB
 
     subgraph Regional["AWS Regional Services · ap-south-1"]
         S3["Amazon S3<br/>dvc-data/ · mlflow-artifacts/<br/>models/ (Day 5)"]
-        ECR["Amazon ECR<br/>asie-inference · asie-airflow"]
+        ECR["Amazon ECR<br/>asie-inference-repo · asie-airflow-repo"]
         Secrets["Secrets Manager<br/>DB creds · tracking URIs"]
     end
 
@@ -115,7 +115,7 @@ What each piece of the local stack becomes, and why it has to change rather than
 | `data/*.parquet` + DVC (no remote) | S3 bucket as DVC remote | `dvc pull` is currently impossible on a fresh clone or CI runner. |
 | `prometheus.yml` / `alerts.yml` / `alertmanager.yml` | kube-prometheus-stack on EKS | `alerts.yml` ports to a PrometheusRule CR almost unchanged. |
 | `.env` secrets | Secrets Manager → K8s Secret at deploy | No secret should live in a file that could get committed. |
-| `asie-inference:latest` (local image) | ECR: `asie-inference`, `asie-airflow` | A private registry, not a locally-tagged image nothing else can pull. |
+| `asie-inference:latest` (local image) | ECR: `asie-inference-repo`, `asie-airflow-repo` | A private registry, not a locally-tagged image nothing else can pull. Named `-repo` to match the `ECR_REPO` variable `asie.sh` already uses. |
 
 ---
 
@@ -123,14 +123,14 @@ What each piece of the local stack becomes, and why it has to change rather than
 
 Day 1 is this document. Days 2–7 follow the Task Board, with the concrete scope this architecture implies for each.
 
-### Day 2 — Provision AWS Infrastructure
+### Day 2 — Provision AWS Infrastructure ✅ Done (2026-08-11)
 
-- Tag both subnet tiers for EKS ownership (`kubernetes.io/cluster/asie-cluster=shared`) — missing today
-- New Terraform module: RDS instance + subnet group + security group (5432 from the EKS node SG only)
-- New S3 bucket (one bucket, three prefixes: `dvc-data/`, `mlflow-artifacts/`, `models/`) + gateway endpoint
-- New ECR repositories: `asie-inference`, `asie-airflow`
-- Relocate `aws_key_pair.asie_auth` out of `modules/ec2` before removing it — `eks-cluster.yaml` depends on it — or drop it for SSM Session Manager
-- Add an S3 backend for Terraform state (currently local-only)
+- ✅ Tagged both subnet tiers for EKS ownership (`kubernetes.io/cluster/asie-cluster=shared`)
+- ✅ New `modules/rds`: instance + subnet group + security group — **with a sequencing deviation**: 5432 is scoped to the two private subnet CIDRs, not the EKS node security group specifically, because that SG doesn't exist until eksctl creates it on Day 3. Still fully private, just broader than the doc originally called for. Tracked in §7 to tighten once the real node SG exists.
+- ✅ New S3 bucket (`asie-platform-<account-id>`, versioned, encrypted, public access blocked) + gateway endpoint. The three prefixes aren't provisioned objects — they appear when Day 5 actually writes to them.
+- ✅ New ECR repositories — **named `asie-inference-repo` / `asie-airflow-repo`**, not `asie-inference` / `asie-airflow` as originally written here, to match the `ECR_REPO` variable `asie.sh` already uses instead of creating a second repo that script doesn't know about.
+- ✅ Dropped `aws_key_pair.asie_auth` and the entire `modules/ec2` (bastion + 2× `t3.medium`) rather than relocating the key — went with the SSM Session Manager option. `eks-cluster.yaml` updated to drop `ssh:` and add `iam.withAddonPolicies.ssm: true`.
+- ⏸ S3 backend for Terraform state — deferred. State stays local for now; revisit if this becomes a team project.
 
 ### Day 3 — Deploy Kubernetes Platform
 
@@ -178,7 +178,7 @@ Concrete calls, each with the reasoning behind it.
 
 **One ALB for all ingress.** Path/host routing to the inference API, Grafana, and the Airflow webserver. Four separate LoadBalancer Services would mean four billed ELBs.
 
-**RDS: private only, one SG rule.** Inbound 5432 from the EKS node security group exclusively. No public endpoint, no exceptions.
+**RDS: private only, one SG rule.** Inbound 5432 from the EKS node security group exclusively. No public endpoint, no exceptions. *(As provisioned Day 2: scoped to the private subnet CIDRs instead, since the node SG doesn't exist until Day 3's `eksctl create cluster` — see §7.)*
 
 **Drop the bastion + SSH key pair.** `asie-key-pair.pem.pub` isn't in the repo and breaks Terraform on a fresh clone. SSM Session Manager replaces it — no key material to manage or leak.
 
@@ -192,6 +192,7 @@ Concrete calls, each with the reasoning behind it.
 
 Flagged now, decided later — none of these block starting Day 2.
 
+- **Tighten the RDS security group.** Provisioned Day 2 scoped to the private subnet CIDRs (10.0.2.0/24, 10.0.4.0/24) rather than the EKS node security group, which doesn't exist until `eksctl create cluster` runs on Day 3. Once it does, swap the RDS SG's ingress rule to reference it directly instead of the broader CIDR range.
 - **Node capacity.** `eks-cluster.yaml` currently requests `t3.medium × 2`. Inference alone asks for 1.5 vCPU / 1.5 Gi per pod at up to 3 HPA replicas — adding Airflow, MLflow, and kube-prometheus-stack to the same two nodes won't fit. Revisit sizing on Day 3; likely `t3.large × 2–3` or a second node group.
 - **IRSA role granularity.** This document shows one role per workload (inference / airflow / mlflow). Exact IAM policy documents get written on Day 2 alongside the S3/RDS Terraform.
 - **Secrets delivery.** Starting with plain K8s Secrets populated at deploy time, matching `asie.sh`'s existing style. External Secrets Operator (auto-sync, rotation) is a reasonable later upgrade, not a Day 1 blocker.
