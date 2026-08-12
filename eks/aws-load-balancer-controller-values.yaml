@@ -1,0 +1,9 @@
+# Helm values for eks/aws-load-balancer-controller (chart: eks/aws-load-balancer-controller).
+# clusterName is passed via --set at install time (asie-cluster) since it's
+# already known to the shell from eks-cluster.yaml; vpcId is not required —
+# the controller auto-discovers it from the node's EC2 metadata.
+region: ap-south-1
+
+serviceAccount:
+  create: false
+  name: aws-load-balancer-controller

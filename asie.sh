@@ -21,14 +21,6 @@ if [ "$1" == "up" ]; then
     cd aws-provision
     terraform init
     terraform apply -auto-approve
-
-    VPC_ID=$(terraform output -raw vpc_id)
-    PUBLIC1_SUBNET=$(terraform output -raw public1_subnet_id)
-    PRIVATE1_SUBNET=$(terraform output -raw private1_subnet_id)
-    PUBLIC2_SUBNET=$(terraform output -raw public2_subnet_id)
-    PRIVATE2_SUBNET=$(terraform output -raw private2_subnet_id)
-
-
     cd ..
 
     echo "Step 2: Building and pushing Docker image to ECR..."
@@ -46,30 +38,16 @@ if [ "$1" == "up" ]; then
     if eksctl get cluster --name $CLUSTER_NAME --region $REGION > /dev/null 2>&1; then
         echo "EKS cluster already exists. Skipping creation."
     else
-        # Replace placeholders in eks config with actual values, dynamically.
-        sed -e "s|<YOUR_VPC_ID>|$VPC_ID|g" \
-            -e "s|<YOUR_PUBLIC1_SUBNET_ID>|$PUBLIC1_SUBNET|g" \
-            -e "s|<YOUR_PRIVATE1_SUBNET_ID>|$PRIVATE1_SUBNET|g" \
-            -e "s|<YOUR_PUBLIC2_SUBNET_ID>|$PUBLIC2_SUBNET|g" \
-            -e "s|<YOUR_PRIVATE2_SUBNET_ID>|$PRIVATE2_SUBNET|g" \
-            eks/eks-cluster.yaml > eks/tmp-cluster.yaml
-        echo "Generated config:"
-        cat eks/tmp-cluster.yaml
-        echo "Generated EKS cluster config with actual VPC and subnet IDs. Creating cluster..."
+        # Fill eks-cluster.yaml's placeholders from Terraform outputs.
+        ./eks/render-cluster-config.sh
 
         eksctl create cluster -f eks/tmp-cluster.yaml
     fi
 
-    echo "Step 4: Enable OIDC (For IRSA)..."
-    eksctl utils associate-iam-oidc-provider \
-        --region $REGION \
-        --cluster $CLUSTER_NAME \
-        --approve
-
-    echo "Step 5: Update kubeconfig for kubectl access..."
+    echo "Step 4: Update kubeconfig for kubectl access..."
     aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
 
-    echo "Step 6: Create IRSA Service Account"
+    echo "Step 5: Create IRSA Service Account"
     eksctl create iamserviceaccount \
         --name asie-irsa-sa \
         --namespace $NAMESPACE \
@@ -78,7 +56,7 @@ if [ "$1" == "up" ]; then
         --override-existing-serviceaccounts \
         --approve
 
-    echo "Step 7: Deploy inference application to EKS using Helm..."
+    echo "Step 6: Deploy inference application to EKS using Helm..."
     helm upgrade --install asie ./helm/asie-inference \
         --namespace $NAMESPACE \
         --create-namespace \
@@ -86,7 +64,7 @@ if [ "$1" == "up" ]; then
         --set image.tag=latest \
         --set serviceAccount.name=asie-irsa-sa
 
-    echo "Step 8: Waiting for LoadBalancer to be ready..."
+    echo "Step 7: Waiting for LoadBalancer to be ready..."
     kubectl get svc -n $NAMESPACE $RELEASE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' -w
     kubectl get svc -n $NAMESPACE
     echo "Setup complete! Your inference service is now accessible via the LoadBalancer endpoints."
