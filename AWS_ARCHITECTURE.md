@@ -131,11 +131,12 @@ Day 1 is this document. Days 2–7 follow the Task Board, with the concrete scop
 - ✅ New ECR repositories — **named `asie-inference-repo` / `asie-airflow-repo`**, not `asie-inference` / `asie-airflow` as originally written here, to match the `ECR_REPO` variable `asie.sh` already uses instead of creating a second repo that script doesn't know about.
 - ✅ Dropped `aws_key_pair.asie_auth` and the entire `modules/ec2` (bastion + 2× `t3.medium`) rather than relocating the key — went with the SSM Session Manager option. `eks-cluster.yaml` updated to drop `ssh:` and add `iam.withAddonPolicies.ssm: true`.
 - ⏸ S3 backend for Terraform state — deferred. State stays local for now; revisit if this becomes a team project.
+- ✅ Applied to `ap-south-1` (2026-08-11) — infrastructure is live. Hit and fixed one bug along the way: the RDS security group's description contained an apostrophe, which AWS rejects. See the Day 2 addendum in Daily Updates for details.
 
 ### Day 3 — Deploy Kubernetes Platform
 
+- ✅ Node sizing resolved: `t3.xlarge × 2` (not `t3.large` as originally noted here — `t3.medium`/`t3.large` both cap at 2 vCPU, only RAM differs between them; `t3.xlarge` is the first step that actually adds CPU headroom, 4 vCPU/16GiB per node). `eks-cluster.yaml` updated.
 - `eksctl create cluster` with `iam.withOIDC: true`
-- Revisit node sizing — see §7, current config likely can't fit all four workloads
 - Namespaces: `asie-inference`, `airflow`, `mlflow`, `monitoring`
 - Install the AWS Load Balancer Controller (the ALB this plan assumes)
 
@@ -193,7 +194,7 @@ Concrete calls, each with the reasoning behind it.
 Flagged now, decided later — none of these block starting Day 2.
 
 - **Tighten the RDS security group.** Provisioned Day 2 scoped to the private subnet CIDRs (10.0.2.0/24, 10.0.4.0/24) rather than the EKS node security group, which doesn't exist until `eksctl create cluster` runs on Day 3. Once it does, swap the RDS SG's ingress rule to reference it directly instead of the broader CIDR range.
-- **Node capacity.** `eks-cluster.yaml` currently requests `t3.medium × 2`. Inference alone asks for 1.5 vCPU / 1.5 Gi per pod at up to 3 HPA replicas — adding Airflow, MLflow, and kube-prometheus-stack to the same two nodes won't fit. Revisit sizing on Day 3; likely `t3.large × 2–3` or a second node group.
+- ~~**Node capacity.**~~ Resolved Day 3 — `t3.xlarge × 2`, see §5.
 - **IRSA role granularity.** This document shows one role per workload (inference / airflow / mlflow). Exact IAM policy documents get written on Day 2 alongside the S3/RDS Terraform.
 - **Secrets delivery.** Starting with plain K8s Secrets populated at deploy time, matching `asie.sh`'s existing style. External Secrets Operator (auto-sync, rotation) is a reasonable later upgrade, not a Day 1 blocker.
 - **Airflow DAG delivery.** Git-sync sidecar vs. baking DAGs into the image — decided when the Helm release goes up on Day 4.

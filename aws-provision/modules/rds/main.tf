@@ -18,7 +18,7 @@ resource "aws_db_subnet_group" "asie" {
 # later, RDS-consuming pods live). No public endpoint, no exceptions.
 resource "aws_security_group" "rds" {
   name        = "asie-rds-sg"
-  description = "Allow Postgres (5432) from ASIE's private subnets only"
+  description = "Allow Postgres (5432) from ASIE private subnets only"
   vpc_id      = var.vpc_id
 
   ingress {
