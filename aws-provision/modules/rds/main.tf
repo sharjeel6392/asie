@@ -14,19 +14,29 @@ resource "aws_db_subnet_group" "asie" {
   }
 }
 
-# Postgres reachable only from the private subnets (where EKS nodes and,
-# later, RDS-consuming pods live). No public endpoint, no exceptions.
+# The EKS node/cluster security group — didn't exist on Day 2, when this SG
+# was scoped to the private subnet CIDRs instead. Now that the cluster
+# exists (Day 3), reference it directly instead of the broader CIDR range.
+data "aws_eks_cluster" "asie" {
+  name = "asie-cluster"
+}
+
+# Postgres reachable only from EKS pods (via the cluster security group).
+# No public endpoint, no exceptions.
 resource "aws_security_group" "rds" {
-  name        = "asie-rds-sg"
+  name = "asie-rds-sg"
+  # NOTE: description is immutable in AWS/the provider (ForceNew) — do not
+  # edit this string casually, it would force-replace the SG, which AWS
+  # then refuses because it's still attached to the RDS instance's ENI.
   description = "Allow Postgres (5432) from ASIE private subnets only"
   vpc_id      = var.vpc_id
 
   ingress {
-    description = "Postgres from private subnets"
-    from_port   = 5432
-    to_port     = 5432
-    protocol    = "tcp"
-    cidr_blocks = var.private_subnet_cidrs
+    description     = "Postgres from EKS cluster security group"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [data.aws_eks_cluster.asie.vpc_config[0].cluster_security_group_id]
   }
 
   egress {

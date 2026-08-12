@@ -129,16 +129,17 @@ Day 1 is this document. Days 2–7 follow the Task Board, with the concrete scop
 - ✅ New `modules/rds`: instance + subnet group + security group — **with a sequencing deviation**: 5432 is scoped to the two private subnet CIDRs, not the EKS node security group specifically, because that SG doesn't exist until eksctl creates it on Day 3. Still fully private, just broader than the doc originally called for. Tracked in §7 to tighten once the real node SG exists.
 - ✅ New S3 bucket (`asie-platform-<account-id>`, versioned, encrypted, public access blocked) + gateway endpoint. The three prefixes aren't provisioned objects — they appear when Day 5 actually writes to them.
 - ✅ New ECR repositories — **named `asie-inference-repo` / `asie-airflow-repo`**, not `asie-inference` / `asie-airflow` as originally written here, to match the `ECR_REPO` variable `asie.sh` already uses instead of creating a second repo that script doesn't know about.
-- ✅ Dropped `aws_key_pair.asie_auth` and the entire `modules/ec2` (bastion + 2× `t3.medium`) rather than relocating the key — went with the SSM Session Manager option. `eks-cluster.yaml` updated to drop `ssh:` and add `iam.withAddonPolicies.ssm: true`.
+- ✅ Dropped `aws_key_pair.asie_auth` and the entire `modules/ec2` (bastion + 2× `t3.medium`) rather than relocating the key — went with the SSM Session Manager option. `eks-cluster.yaml` updated to drop `ssh:`. (Day 3 correction: there's no `iam.withAddonPolicies.ssm` field in eksctl's schema — `eksctl create cluster` rejected it with `unknown field "ssm"`. Managed node groups get `AmazonSSMManagedInstanceCore` attached by default now, so no explicit config is needed at all.)
 - ⏸ S3 backend for Terraform state — deferred. State stays local for now; revisit if this becomes a team project.
 - ✅ Applied to `ap-south-1` (2026-08-11) — infrastructure is live. Hit and fixed one bug along the way: the RDS security group's description contained an apostrophe, which AWS rejects. See the Day 2 addendum in Daily Updates for details.
 
-### Day 3 — Deploy Kubernetes Platform
+### Day 3 — Deploy Kubernetes Platform ✅ Done (2026-08-12)
 
 - ✅ Node sizing resolved: `t3.xlarge × 2` (not `t3.large` as originally noted here — `t3.medium`/`t3.large` both cap at 2 vCPU, only RAM differs between them; `t3.xlarge` is the first step that actually adds CPU headroom, 4 vCPU/16GiB per node). `eks-cluster.yaml` updated.
-- `eksctl create cluster` with `iam.withOIDC: true`
-- Namespaces: `asie-inference`, `airflow`, `mlflow`, `monitoring`
-- Install the AWS Load Balancer Controller (the ALB this plan assumes)
+- ✅ `eksctl create cluster` with `iam.withOIDC: true` — cluster `asie-cluster` live, 2 nodes `Ready`, OIDC provider registered. New `eks/render-cluster-config.sh` fills the VPC/subnet placeholders from Terraform outputs (`asie.sh` now calls it instead of duplicating the `sed`). Hit one bug: `iam.withAddonPolicies.ssm` isn't a real eksctl field — removed entirely, since eksctl attaches `AmazonSSMManagedInstanceCore` to managed node groups by default now.
+- ✅ Namespaces created: `asie-inference`, `airflow`, `mlflow`, `monitoring` (`eks/namespaces.yaml`)
+- ✅ AWS Load Balancer Controller installed via Helm (`eks/aws-load-balancer-controller-values.yaml`), IRSA service account in `kube-system`, IAM policy pinned at `eks/iam-policies/aws-load-balancer-controller-policy.json`. 2/2 pods `Running`, no permission errors.
+- ✅ RDS security group tightened to the EKS cluster SG (see §7).
 
 ### Day 4 — Deploy Existing Services
 
@@ -193,9 +194,9 @@ Concrete calls, each with the reasoning behind it.
 
 Flagged now, decided later — none of these block starting Day 2.
 
-- **Tighten the RDS security group.** Provisioned Day 2 scoped to the private subnet CIDRs (10.0.2.0/24, 10.0.4.0/24) rather than the EKS node security group, which doesn't exist until `eksctl create cluster` runs on Day 3. Once it does, swap the RDS SG's ingress rule to reference it directly instead of the broader CIDR range.
+- ~~**Tighten the RDS security group.**~~ Resolved Day 3 — ingress now references the EKS cluster security group (`sg-0a4fc01ec840df1ed`) directly instead of the private subnet CIDRs. Note: the SG's `description` field is immutable in the AWS provider (changing it forces a full destroy/recreate) and AWS refuses to delete a SG still attached to the RDS instance's ENI — so the description was left as-is and only the `ingress` block's `cidr_blocks` → `security_groups` swap was applied in place, via a new `data "aws_eks_cluster"` lookup in `modules/rds/main.tf`.
 - ~~**Node capacity.**~~ Resolved Day 3 — `t3.xlarge × 2`, see §5.
-- **IRSA role granularity.** This document shows one role per workload (inference / airflow / mlflow). Exact IAM policy documents get written on Day 2 alongside the S3/RDS Terraform.
+- **IRSA role granularity — decided Day 3.** One IAM role per workload (inference / airflow / mlflow), created via `eksctl create iamserviceaccount --namespace <ns> --name <workload>-irsa-sa` per namespace — the same tool and pattern used for the AWS Load Balancer Controller's own service account, rather than Terraform-managed IAM roles, so IAM-role-to-K8s-SA creation stays in one tool. Not implemented yet: the actual policy JSON per workload waits for Day 4, once each workload's concrete S3 prefix and RDS access pattern is known — writing scoped policies before that is just rework waiting to happen.
 - **Secrets delivery.** Starting with plain K8s Secrets populated at deploy time, matching `asie.sh`'s existing style. External Secrets Operator (auto-sync, rotation) is a reasonable later upgrade, not a Day 1 blocker.
 - **Airflow DAG delivery.** Git-sync sidecar vs. baking DAGs into the image — decided when the Helm release goes up on Day 4.
 

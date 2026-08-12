@@ -51,7 +51,8 @@ managedNodeGroups:
         autoScaler: true
         albIngress: true
         cloudWatch: true
-        # Enables AWS Systems Manager Session Manager for node shell access —
-        # replaces the bastion + SSH key pair (aws-provision/modules/ec2,
-        # removed Day 2). No key material to manage or leak.
-        ssm: true
+
+    # No `ssh:` block, no key pair — Session Manager access replaces the
+    # bastion + SSH key (aws-provision/modules/ec2, removed Day 2). eksctl
+    # attaches AmazonSSMManagedInstanceCore to managed node groups by
+    # default now, so nothing further is needed here.
