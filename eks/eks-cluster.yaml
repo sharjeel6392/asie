@@ -5,6 +5,13 @@ metadata:
   name: asie-cluster
   region: ap-south-1
 
+# OIDC provider for the cluster — required for IRSA (pods assuming IAM
+# roles), used by the inference/Airflow/MLflow workloads and the AWS Load
+# Balancer Controller. Baked in here instead of a separate
+# `eksctl utils associate-iam-oidc-provider` call after creation.
+iam:
+  withOIDC: true
+
 vpc:
   id: <YOUR_VPC_ID>
 
@@ -23,7 +30,11 @@ vpc:
 
 managedNodeGroups:
   - name: asie-nodes
-    instanceType: t3.medium
+    # t3.xlarge, not t3.large — t3.medium/large both cap at 2 vCPU (only RAM
+    # differs); xlarge is the first step up in CPU (4 vCPU/16GiB), needed to
+    # fit inference (up to 3 HPA replicas x 1.5 vCPU) alongside Airflow,
+    # MLflow, and kube-prometheus-stack on the same 2 nodes.
+    instanceType: t3.xlarge
 
     desiredCapacity: 2
     minSize: 1
