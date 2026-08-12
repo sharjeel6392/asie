@@ -2,20 +2,12 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
 import logging
-import os
-import sys
 from airflow.exceptions import AirflowSkipException
 from src.constants import DRIFT_THRESHOLD
 
-
-# Force the correct environment for all tasks in this DAG
-os.environ["MLFLOW_TRACKING_URI"] = "sqlite:////home/kirksalvator/mlflow.db"
-
-
-# Ensure scr/ is importable
-PROJECT_ROOT = "/mnt/e/ASIE"
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+# MLFLOW_TRACKING_URI comes from the chart's env (eks/airflow-values.yaml)
+# and src/ is importable via PYTHONPATH=/opt/airflow/asie (Dockerfile.airflow)
+# — both used to be hardcoded here for local-only paths.
 
 from src.pipelines.retraining_pipeline import retraining_pipeline
 from src.drift.storage.drift_metrics_repository import get_latest_drift_metric
@@ -29,6 +21,7 @@ def check_drift(**context):
         if drift_score < DRIFT_THRESHOLD:
             raise AirflowSkipException(f'No significant drift detected (score: {drift_score}). Skipping retraining.')
         logging.info(f'Drift detected (score: {drift_score}). Continue retraining')
+        return True
     else:
         raise AirflowSkipException('No drift metrics available')
     

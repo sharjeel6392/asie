@@ -103,6 +103,21 @@ resource "aws_ecr_repository" "airflow" {
   }
 }
 
+# ghcr.io/mlflow/mlflow ships without psycopg2/boto3 baked in, so a custom
+# image (Dockerfile.mlflow) is needed to talk to RDS + S3 — hence a 3rd repo.
+resource "aws_ecr_repository" "mlflow" {
+  name                 = "asie-mlflow-repo"
+  image_tag_mutability = "MUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = {
+    Name = "asie-mlflow-repo"
+  }
+}
+
 resource "aws_ecr_lifecycle_policy" "inference_expire_untagged" {
   repository = aws_ecr_repository.inference.name
 
@@ -123,6 +138,24 @@ resource "aws_ecr_lifecycle_policy" "inference_expire_untagged" {
 
 resource "aws_ecr_lifecycle_policy" "airflow_expire_untagged" {
   repository = aws_ecr_repository.airflow.name
+
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "Expire untagged images after 14 days"
+      selection = {
+        tagStatus   = "untagged"
+        countType   = "sinceImagePushed"
+        countUnit   = "days"
+        countNumber = 14
+      }
+      action = { type = "expire" }
+    }]
+  })
+}
+
+resource "aws_ecr_lifecycle_policy" "mlflow_expire_untagged" {
+  repository = aws_ecr_repository.mlflow.name
 
   policy = jsonencode({
     rules = [{

@@ -1,4 +1,4 @@
-FROM apache/airflow:2.10.0-python3.12
+FROM apache/airflow:2.10.5-python3.12
 
 USER root
 
@@ -9,7 +9,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER airflow
 
-COPY requirements/requirements_inference.txt /requirements_inference.txt
+COPY requirements/requirements_airflow.txt /requirements_airflow.txt
 
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /requirements_inference.txt
+# torch is CPU-only here too — separate layer/index, same reasoning as the
+# serving dockerfile (see that file's comment).
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.6.0
+RUN pip install --no-cache-dir -r /requirements_airflow.txt
+
+ENV PYTHONPATH=/opt/airflow/asie
+WORKDIR /opt/airflow/asie
+
+COPY --chown=airflow:root src/ ./src/
+COPY --chown=airflow:root configs/ ./configs/
+COPY --chown=airflow:root pyproject.toml .
+COPY --chown=airflow:root airflow-home/dags/ /opt/airflow/dags/

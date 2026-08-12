@@ -16,6 +16,30 @@ def _download(run_id: str, artifact_path: str) -> str:
 def _copy(src, dst):
     shutil.copytree(src, dst)
 
+def _sync_exported_model_to_s3(logger) -> None:
+    """Uploads EXPORTED_MODEL_DIR to S3 so the serving pods' initContainer
+    has something fresh to fetch on next restart/scale-out. Gated on
+    ASIE_MODEL_S3_URI — no-op locally (matches model_registry.py's gating)."""
+    s3_uri = os.getenv("ASIE_MODEL_S3_URI")
+    if not s3_uri:
+        return
+
+    import boto3
+
+    bucket, _, prefix = s3_uri.rstrip('/').partition('/')
+    s3 = boto3.client("s3")
+
+    for root, _dirs, files in os.walk(EXPORTED_MODEL_DIR):
+        for filename in files:
+            if filename == "training_args.bin":
+                continue  # never read by from_pretrained(), pure dead weight
+            local_path = os.path.join(root, filename)
+            rel_path = os.path.relpath(local_path, EXPORTED_MODEL_DIR)
+            key = f"{prefix}/{rel_path}".replace(os.sep, "/")
+            s3.upload_file(local_path, bucket, key)
+
+    logger.debug(f'Synced {EXPORTED_MODEL_DIR} -> s3://{bucket}/{prefix}/')
+
 def export_models():
     logger = configure_logger()
     registry = load_registry()
@@ -52,7 +76,9 @@ def export_models():
 
         _copy(model_path, os.path.join(EXPORTED_MODEL_DIR, "shadow", MODEL_DIR_NAME))
         _copy(tokenizer_path, os.path.join(EXPORTED_MODEL_DIR, 'shadow', TOKENIZER_DIR_NAME))
-    
+
+    _sync_exported_model_to_s3(logger)
+
     logger.debug('Export complete')
 
 

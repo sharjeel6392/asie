@@ -3,11 +3,16 @@ kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}
 data:
-  PRIMARY_MODEL_PATH: "/app/exported_model/primary/model"
-  PRIMARY_TOKENIZER_PATH: "/app/exported_model/primary/tokenizer"
+  PRIMARY_MODEL_PATH: "/models/primary/model"
+  PRIMARY_TOKENIZER_PATH: "/models/primary/tokenizer"
 
-  SHADOW_MODEL_PATH: "/app/exported_model/shadow/model"
-  SHADOW_TOKENIZER_PATH: "/app/exported_model/shadow/tokenizer"
+  SHADOW_MODEL_PATH: "/models/shadow/model"
+  SHADOW_TOKENIZER_PATH: "/models/shadow/tokenizer"
 
   INFERENCE_DEVICE: "cpu"
   APP_ENV: "development"
+
+  MODEL_S3_URI: {{ .Values.models.s3Uri | quote }}
+  AWS_REGION: {{ .Values.aws.region | quote }}
+  AWS_DEFAULT_REGION: {{ .Values.aws.region | quote }}
+  MLFLOW_TRACKING_URI: {{ .Values.mlflow.trackingUri | quote }}

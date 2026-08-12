@@ -1,0 +1,101 @@
+# Values for apache-airflow/airflow chart v1.16.0 (appVersion 2.10.5,
+# matching Dockerfile.airflow's base image — a mismatch here breaks
+# migrateDatabaseJob).
+
+executor: LocalExecutor
+airflowVersion: "2.10.5"
+
+# RDS is external; LocalExecutor needs no broker — drop both bundled
+# subcharts rather than standing up Celery+Redis for one low-frequency DAG.
+postgresql:
+  enabled: false
+redis:
+  enabled: false
+
+images:
+  airflow:
+    repository: 818111885210.dkr.ecr.ap-south-1.amazonaws.com/asie-airflow-repo
+    tag: latest
+    pullPolicy: IfNotPresent
+
+data:
+  metadataSecretName: airflow-metadata-db
+
+# Fixed secret, not chart-regenerated on every `helm upgrade` — regenerating
+# invalidates all webserver sessions. Create it once:
+#   kubectl -n airflow create secret generic airflow-webserver-secret \
+#     --from-literal=webserver-secret-key=$(python -c 'import secrets; print(secrets.token_hex(16))')
+webserverSecretKeySecretName: airflow-webserver-secret
+
+# DAGs are baked into the image (Dockerfile.airflow), not synced/mounted.
+dags:
+  persistence:
+    enabled: false
+  gitSync:
+    enabled: false
+
+triggerer:
+  enabled: false
+statsd:
+  enabled: false
+flower:
+  enabled: false
+cleanup:
+  enabled: false
+
+config:
+  core:
+    load_examples: 'False'
+  database:
+    # RDS is db.t4g.micro (~112 max_connections) shared across 3 databases
+    # and several pods — keep each pool small.
+    sql_alchemy_pool_size: '3'
+    sql_alchemy_max_overflow: '3'
+
+# Reuse the IRSA service account created in Part 3 (eksctl create
+# iamserviceaccount --name airflow-irsa-sa --namespace airflow) on every
+# pod that might touch S3 — missing even one leaves that pod silently
+# without S3 access, no error until the DAG actually runs.
+scheduler:
+  serviceAccount:
+    create: false
+    name: airflow-irsa-sa
+webserver:
+  serviceAccount:
+    create: false
+    name: airflow-irsa-sa
+  service:
+    type: ClusterIP
+workers:
+  serviceAccount:
+    create: false
+    name: airflow-irsa-sa
+# Hooks make `helm upgrade` hang silently on failure with no visible logs —
+# plain Jobs are inspectable with `kubectl logs`/`kubectl describe`.
+createUserJob:
+  useHelmHooks: false
+  serviceAccount:
+    create: false
+    name: airflow-irsa-sa
+migrateDatabaseJob:
+  useHelmHooks: false
+  serviceAccount:
+    create: false
+    name: airflow-irsa-sa
+
+env:
+  - name: MLFLOW_TRACKING_URI
+    value: "http://asie-mlflow.mlflow.svc.cluster.local:5000"
+  - name: AWS_DEFAULT_REGION
+    value: "ap-south-1"
+  - name: ASIE_MODEL_S3_URI
+    value: "asie-platform-818111885210/models"
+  - name: S3_BUCKET
+    value: "asie-platform-818111885210"
+
+# asie_app (not airflow_db — the DAG's drift-check/retraining code reads
+# ASIE_DATABASE_URL via src.db.engine, a different database than Airflow's
+# own metadata DB).
+extraEnvFrom: |
+  - secretRef:
+      name: asie-app-db

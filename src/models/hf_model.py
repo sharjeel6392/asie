@@ -57,6 +57,7 @@ class HFTransformerModel:
 
             training_args = TrainingArguments(
                 output_dir = os.path.abspath("./runs"),
+                save_total_limit=1,
                 fp16=device_is_gpu,
                 per_device_train_batch_size=int(cfg['batch_size']),
                 num_train_epochs=int(cfg['epochs']),

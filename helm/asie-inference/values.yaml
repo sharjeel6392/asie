@@ -34,6 +34,25 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template.
   name: ""
 
+aws:
+  region: ap-south-1
+
+# S3 location the initContainer syncs into /models before the app starts.
+models:
+  s3Uri: "asie-platform-818111885210/models"
+
+# Secret (created by eks/db-bootstrap/create-app-secrets.sh) holding the
+# Postgres connection string for asie_app.
+database:
+  secretName: asie-app-db
+  secretKey: ASIE_DATABASE_URL
+
+mlflow:
+  trackingUri: "http://asie-mlflow.mlflow.svc.cluster.local:5000"
+
+initContainer:
+  image: "amazon/aws-cli:2"
+
 # This is for setting Kubernetes Annotations to a Pod.
 # For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
 podAnnotations: {}

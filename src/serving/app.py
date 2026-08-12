@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI, HTTPException, Response, Request
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from prometheus_client import Gauge, generate_latest
 
@@ -43,7 +43,6 @@ from src.constants import (
 app = FastAPI(title= API_TITLE)
 loader = ModelLoader(device=DEFAULT_INFERENCE_DEVICE)
 predictor = None
-storage_db()
 
 drift_gauge = Gauge(
     DRIFT_METRIC_NAME,
@@ -64,9 +63,14 @@ def startup_event():
     logger.info(f'Connecting to the inference db...')
     connected = init_db()
     if connected == False:
-        logger.error("No connection to the inference log db")
-        raise
-    
+        raise RuntimeError("No connection to the inference log db")
+
+    logger.info(f'Connecting to the drift metrics db...')
+    drift_connected = storage_db()
+    if drift_connected == False:
+        raise RuntimeError("No connection to the drift metrics db")
+        
+
     loader = ModelLoader(
         device= Settings.INFERENCE_DEVICE,
     )
@@ -154,7 +158,7 @@ async def predict(req: PredictRequest):
 
         record = {
             "request_id": str(uuid.uuid4()),
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat() ,
             "input_data": json.dumps({'text': text}),
             "embedding_json": json.dumps(embeddings) if embeddings else None,
             "input_length": len(text),
@@ -193,7 +197,8 @@ def get_drift():
 @app.get(METRICS_ROUTE, response_class=Response)
 def metrics():
     drift_value = get_latest_drift_metric()
-    drift_gauge.set(drift_value)
+    if drift_value is not None:
+        drift_gauge.set(drift_value)
 
     return Response(generate_latest(), media_type=PROMETHEUS_TEXT_MEDIA_TYPE)
 

@@ -1,5 +1,5 @@
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.drift.storage.factory import get_drift_store
 from src.drift.features import build_feature_dataframe
@@ -10,7 +10,7 @@ from src.logger import configure_logger
 MIN_SAMPLES = 10
 
 def compute_time_windows(window_hours: float):
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     cur_end = now
     cur_start = now - timedelta(hours = window_hours)
@@ -27,7 +27,9 @@ def run_drift_job(window_hours: float = 1.0) -> dict:
     # define windows
     ref_start, ref_end, cur_start, cur_end = compute_time_windows(window_hours)
 
-    # fetch logs
+    # fetch logs — ISO strings, not datetime objects: Postgres implicitly
+    # casts ISO-8601 text on both INSERT and BETWEEN comparisons, so this
+    # representation works identically against local SQLite and RDS.
     ref_logs = store.fetch_reference(ref_start.isoformat(), ref_end.isoformat())
 
     cur_logs = store.fetch_reference(cur_start.isoformat(), cur_end.isoformat())
