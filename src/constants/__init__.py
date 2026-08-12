@@ -74,6 +74,11 @@ PROMETHEUS_TEXT_MEDIA_TYPE = "text/plain"
 INFERENCE_DB_PATH = Path(f"{DATA_DIR}/inference.db")
 INFERENCE_SCHEMA_PATH = Path("src/serving/inference_log_DB/schema.sql")
 
+# SQLAlchemy connection string — sqlite locally by default (matches
+# INFERENCE_DB_PATH), overridden by ASIE_DATABASE_URL to point at RDS
+# Postgres in the cluster (see eks/db-bootstrap/).
+DEFAULT_DATABASE_URL = f"sqlite:///{INFERENCE_DB_PATH.as_posix()}"
+
 # Drift detection and metrics
 DRIFT_DB_PATH = "drift.db"
 DRIFT_SCHEMA_PATH = Path("src/drift/storage/schema.sql")

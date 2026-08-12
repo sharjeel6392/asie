@@ -50,3 +50,7 @@ output "ecr_inference_repo_url" {
 output "ecr_airflow_repo_url" {
   value = aws_ecr_repository.airflow.repository_url
 }
+
+output "ecr_mlflow_repo_url" {
+  value = aws_ecr_repository.mlflow.repository_url
+}

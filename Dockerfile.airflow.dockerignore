@@ -1,0 +1,58 @@
+# Per-Dockerfile override for `docker build -f Dockerfile.airflow`.
+# BuildKit uses this file INSTEAD OF .dockerignore when it exists (not
+# merged) — so the exclusions the serving build needs (airflow-home/,
+# dags/) are deliberately absent here, since this build needs to COPY them.
+
+# Git and editor noise
+.git/
+.vscode/
+.idea/
+
+# Python / local env
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+
+# MLflow, training outputs, and local models — not needed baked into the
+# image; the retraining pipeline writes exported_model/ then syncs it to
+# S3 itself (see src/models/export_model.py), it doesn't need a stale copy
+# already present in the image.
+artifacts/
+runs/
+mlruns/
+mlflow/
+model/
+exported_model/
+
+# Data: keep manifests and DVC pointers only — the DAG runs `dvc pull`
+data/*
+!data/data_manifest.yaml
+!data/*.dvc
+
+# Stale duplicate airflow dir (airflow-home/ is the active one, kept)
+airflow/
+temp_airflow_run.txt
+
+# Secrets and local databases
+.env
+.env.*
+*.pem
+*.pem.pub
+*.db
+*.sqlite
+*.sqlite3
+
+# Terraform local state and cache
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*tfplan*
+plan-outputs/

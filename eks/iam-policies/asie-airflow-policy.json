@@ -1,0 +1,37 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadWriteModelsAndMlflowArtifacts",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": [
+        "arn:aws:s3:::asie-platform-818111885210/models/*",
+        "arn:aws:s3:::asie-platform-818111885210/mlflow-artifacts/*"
+      ]
+    },
+    {
+      "Sid": "ReadWriteDvcData",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": "arn:aws:s3:::asie-platform-818111885210/dvc-data/*"
+    },
+    {
+      "Sid": "ListRelevantPrefixes",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::asie-platform-818111885210",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": ["models/*", "mlflow-artifacts/*", "dvc-data/*"]
+        }
+      }
+    },
+    {
+      "Sid": "BucketLocation",
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketLocation"],
+      "Resource": "arn:aws:s3:::asie-platform-818111885210"
+    }
+  ]
+}

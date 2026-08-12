@@ -20,6 +20,7 @@ runs/
 mlruns/
 mlflow/
 model/
+exported_model/
 
 # Data: keep manifests and DVC pointers only
 data/*
@@ -27,8 +28,13 @@ data/*
 !data/*.dvc
 
 # Logs and local orchestration state
+# NOTE: /pipelines/ is anchored (leading slash) so it only matches a
+# top-level pipelines/ dir, not src/pipelines/ — an unanchored "pipelines/"
+# here previously matched src/pipelines/ too (gitignore-style matching is
+# depth-unaware without a leading slash), silently dropping it from every
+# build context even though `COPY src/ ./src/` looks like it should copy it.
 logs/
-pipelines/
+/pipelines/
 airflow/
 airflow-home/
 dags/

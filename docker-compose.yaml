@@ -42,11 +42,9 @@ services:
       mlflow:
         condition: service_started
     volumes:
-      - ./dags:/opt/airflow/dags
-      - ./src:/opt/airflow/plugins/src  # Syncs your model logic
-      - ./requirements/requirements_inference.txt:/requirements_inference.txt
+      - ./airflow-home/dags:/opt/airflow/dags
+      - ./src:/opt/airflow/asie/src  # Syncs your model logic; matches ENV PYTHONPATH in Dockerfile.airflow
     environment:
-      - PYTHONPATH=${PYTHONPATH}:/opt/airflow/plugins
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       - MLFLOW_TRACKING_URI=http://mlflow:5000

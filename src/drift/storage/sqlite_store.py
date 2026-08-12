@@ -1,23 +1,24 @@
 import pandas as pd
-from src.serving.inference_log_DB.database import get_connection
+from sqlalchemy import text
+from src.db.engine import get_engine
 
 class SQLiteDriftStore:
     def _query(self, start_time: str, end_time: str) -> pd.DataFrame:
-        conn = get_connection()
+        engine = get_engine()
 
-        query = """
+        query = text("""
             SELECT *
             FROM inference_logs
-            WHERE timestamp BETWEEN ? AND ?
-            """
-        
-        df = pd.read_sql_query(query, conn, params=(start_time, end_time))
-        conn.close()
+            WHERE timestamp BETWEEN :start_time AND :end_time
+            """)
 
-        return df
-    
+        # Pass the engine (not a raw DBAPI connection) — pandas 2.x warns
+        # on the latter and it also sidesteps needing to manage the
+        # connection lifecycle here ourselves.
+        return pd.read_sql_query(query, engine, params={"start_time": start_time, "end_time": end_time})
+
     def fetch_current(self, start_time: str, end_time: str) -> pd.DataFrame:
         return self._query(start_time, end_time)
-    
+
     def fetch_reference(self, start_time: str, end_time: str) -> pd.DataFrame:
         return self._query(start_time, end_time)

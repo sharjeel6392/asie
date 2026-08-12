@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: asie-db-bootstrap
+  namespace: asie-inference
+spec:
+  backoffLimit: 4
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: db-bootstrap
+        image: postgres:16-alpine
+        envFrom:
+        - secretRef:
+            name: asie-rds-bootstrap
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          psql -v ON_ERROR_STOP=1 \
+            -v asie_app_user_password="$ASIE_APP_USER_PASSWORD" \
+            -v airflow_user_password="$AIRFLOW_USER_PASSWORD" \
+            -v mlflow_user_password="$MLFLOW_USER_PASSWORD" \
+            -f /sql/00_create_databases.sql \
+            -f /sql/10_inference_logs.sql \
+            -f /sql/11_drift_metrics.sql
+        volumeMounts:
+        - name: sql
+          mountPath: /sql
+      volumes:
+      - name: sql
+        configMap:
+          name: asie-db-sql
