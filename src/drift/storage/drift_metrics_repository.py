@@ -32,16 +32,29 @@ def init_drift_db() -> bool:
 
 def insert_drift_metric(final_drift_score: float):
     logger = configure_logger()
+
+    # float() is required, not cosmetic. compute_drift() returns a
+    # numpy.float64, and psycopg2 has no adapter for numpy scalar types -- it
+    # falls back to their repr, producing literal SQL like
+    #   VALUES ('2026-08-13T19:28:31+00:00', np.float64(0.443))
+    # which Postgres rejects with: schema "np" does not exist.
+    #
+    # sqlite3 accepts numpy floats via duck typing, so this only ever fails
+    # against RDS, and only on the path where a real score is computed -- the
+    # insufficient-data path below passes a plain 0.0 and always worked. That
+    # combination hid it through every local test.
+    score = float(final_drift_score)
+
     with get_connection() as conn:
         conn.execute(
             text("""
                 INSERT INTO drift_metrics (timestamp, final_drift_score)
                 VALUES (:timestamp, :final_drift_score)
             """),
-             {"timestamp": datetime.now(timezone.utc).isoformat(), "final_drift_score": final_drift_score},
+             {"timestamp": datetime.now(timezone.utc).isoformat(), "final_drift_score": score},
         )
         conn.commit()
-    logger.debug(f'Wrote drift score: {final_drift_score}')
+    logger.debug(f'Wrote drift score: {score}')
 
 def get_latest_drift_record() -> tuple[float, datetime] | None:
     """Newest drift row as (score, timestamp), or None if the table is empty.
