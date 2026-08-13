@@ -14,9 +14,11 @@ artifactRoot: "s3://asie-platform-818111885210/mlflow-artifacts/"
 aws:
   region: ap-south-1
 
-# 2 gunicorn workers, not the default 4 — RDS is db.t4g.micro and each
-# worker holds its own connection pool.
-workers: 2
+# 1 gunicorn worker. Was 2, which OOMKilled (exit 137) against the 1Gi limit
+# below: MLflow 3.x starts a huey job consumer with 5 threads per worker plus
+# a periodic scheduler, so the per-worker footprint is far larger than 2.x's.
+# One worker is ample for a single-team tracking server.
+workers: 1
 
 service:
   type: ClusterIP
@@ -28,4 +30,7 @@ resources:
     memory: "512Mi"
   limits:
     cpu: "1"
-    memory: "1Gi"
+    # 2Gi, not 1Gi: the server was OOMKilled at 1Gi even before serving a
+    # request. MLflow 3.x runs background job infrastructure (huey consumers)
+    # in-process that 2.x did not.
+    memory: "2Gi"
