@@ -1,4 +1,15 @@
 #!/bin/bash
+#
+# Single entry and exit point for the whole ASIE AWS stack.
+#
+#   ./asie.sh up      provision everything and deploy
+#   ./asie.sh pause    delete compute, KEEP all data (S3, ECR, RDS, VPC)
+#   ./asie.sh resume   rebuild compute on top of surviving data
+#   ./asie.sh down     destroy everything, irreversibly (asks first)
+#
+# The phases below are functions rather than one long script so the four
+# commands compose from the same building blocks -- `resume` must run exactly
+# the steps `up` runs, or it drifts out of sync and only fails in production.
 
 set -e
 
@@ -24,31 +35,42 @@ INFERENCE_ECR_REPO="asie-inference-repo"
 AIRFLOW_ECR_REPO="asie-airflow-repo"
 MLFLOW_ECR_REPO="asie-mlflow-repo"
 
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-INFERENCE_ECR_URI="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$INFERENCE_ECR_REPO"
-AIRFLOW_ECR_URI="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$AIRFLOW_ECR_REPO"
-MLFLOW_ECR_URI="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$MLFLOW_ECR_REPO"
-
 # Tag every image with the current commit, not just "latest" -- a
 # "latest"-tagged Deployment with an unchanged pod spec won't restart on
 # `helm upgrade`, since Kubernetes doesn't see the underlying image as
 # having changed. GIT_SHA is what actually forces a rollout.
 GIT_SHA=$(git rev-parse --short HEAD)
 
-# -------------------------------
-# SETUP
-# -------------------------------
+step() { echo ""; echo "==> $*"; }
 
-if [ "$1" == "up" ]; then
-    echo "Starting FULL SETUP..."
+# Resolved lazily, not at the top of the script: an unconditional `aws sts`
+# call means `./asie.sh` with no arguments needs working connectivity just to
+# print its usage, and under `set -e` it dies before printing anything at all.
+require_aws() {
+    if ! ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null); then
+        echo "Cannot reach AWS (sts.$REGION.amazonaws.com). Check connectivity and credentials." >&2
+        exit 1
+    fi
+    INFERENCE_ECR_URI="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$INFERENCE_ECR_REPO"
+    AIRFLOW_ECR_URI="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$AIRFLOW_ECR_REPO"
+    MLFLOW_ECR_URI="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$MLFLOW_ECR_REPO"
+    S3_BUCKET="asie-platform-$ACCOUNT_ID"
+}
 
-    echo "Step 1: Provisioning AWS infrastructure with Terraform..."
+# ---------------------------------------------------------------------------
+# BUILD-UP PHASES
+# ---------------------------------------------------------------------------
+
+provision_infra() {
+    step "Provisioning AWS infrastructure with Terraform..."
     cd aws-provision
     terraform init
     terraform apply -auto-approve
     cd ..
+}
 
-    echo "Step 2: Creating EKS cluster with eksctl..."
+create_cluster() {
+    step "Creating EKS cluster with eksctl..."
     if eksctl get cluster --name $CLUSTER_NAME --region $REGION > /dev/null 2>&1; then
         echo "EKS cluster already exists. Skipping creation."
     else
@@ -57,13 +79,12 @@ if [ "$1" == "up" ]; then
         eksctl create cluster -f eks/tmp-cluster.yaml
     fi
 
-    echo "Step 3: Update kubeconfig for kubectl access..."
+    step "Updating kubeconfig for kubectl access..."
     aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
+}
 
-    echo "Step 4: Ensure namespaces exist..."
-    kubectl apply -f eks/namespaces.yaml
-
-    echo "Step 4a: Ensure the EBS CSI driver addon exists..."
+cluster_addons() {
+    step "Ensuring the EBS CSI driver addon exists..."
     # eks-cluster.yaml declares this addon, but that only applies on cluster
     # CREATE -- an already-existing cluster needs it added explicitly. Without
     # it every PVC (Prometheus, Grafana) stays Pending forever, since the
@@ -71,28 +92,34 @@ if [ "$1" == "up" ]; then
     if eksctl get addon --cluster $CLUSTER_NAME --region $REGION --name aws-ebs-csi-driver > /dev/null 2>&1; then
         echo "EBS CSI driver addon already present. Skipping."
     else
+        eksctl create iamserviceaccount \
+            --cluster $CLUSTER_NAME --region $REGION \
+            --name ebs-csi-controller-sa --namespace kube-system \
+            --attach-policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
+            --role-only --role-name AmazonEKS_EBS_CSI_DriverRole_asie \
+            --override-existing-serviceaccounts --approve
         eksctl create addon --cluster $CLUSTER_NAME --region $REGION \
             --name aws-ebs-csi-driver \
-            --service-account-role-arn "$(eksctl create iamserviceaccount \
-                --cluster $CLUSTER_NAME --region $REGION \
-                --name ebs-csi-controller-sa --namespace kube-system \
-                --attach-policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
-                --role-only --role-name AmazonEKS_EBS_CSI_DriverRole_asie \
-                --override-existing-serviceaccounts --approve > /dev/null 2>&1; \
-                aws iam get-role --role-name AmazonEKS_EBS_CSI_DriverRole_asie \
-                    --query 'Role.Arn' --output text)" \
+            --service-account-role-arn "arn:aws:iam::${ACCOUNT_ID}:role/AmazonEKS_EBS_CSI_DriverRole_asie" \
             --force
     fi
 
-    echo "Step 4b: Apply the gp3 StorageClass and demote gp2..."
+    step "Applying the gp3 StorageClass and demoting gp2..."
     kubectl apply -f eks/storageclass-gp3.yaml
     # Two StorageClasses both claiming is-default-class makes PVC binding
     # non-deterministic, so explicitly demote the built-in gp2.
     kubectl patch storageclass gp2 \
         -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}' \
         > /dev/null 2>&1 || true
+}
 
-    echo "Step 5: Create IRSA Service Accounts (one per workload, least-privilege S3 policy)..."
+ensure_namespaces() {
+    step "Ensuring namespaces exist..."
+    kubectl apply -f eks/namespaces.yaml
+}
+
+create_irsa() {
+    step "Creating IRSA service accounts (one per workload, least-privilege S3 policy)..."
     eksctl create iamserviceaccount \
         --name asie-irsa-sa \
         --namespace $INFERENCE_NAMESPACE \
@@ -119,14 +146,24 @@ if [ "$1" == "up" ]; then
         --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AsieMlflowS3Policy" \
         --override-existing-serviceaccounts \
         --approve
+}
 
-    echo "Step 6: Bootstrapping RDS (airflow_db/mlflow_db, DB roles, ported schema, app secrets)..."
+bootstrap_db() {
+    step "Bootstrapping RDS (airflow_db/mlflow_db, DB roles, ported schema, app secrets)..."
+    # Also required on `resume`: the connection Secrets live in the cluster and
+    # die with it, while the RDS roles survive. 00_create_databases.sql now
+    # ALTERs each role's password unconditionally so a regenerated Secret
+    # re-syncs instead of silently mismatching.
     ./eks/db-bootstrap/run.sh
+}
 
-    echo "Step 7: Uploading exported_model/ + model_registry.yaml to S3..."
+upload_models() {
+    step "Uploading exported_model/ + model_registry.yaml to S3..."
     ./scripts/upload-models.sh
+}
 
-    echo "Step 8: Building and pushing images to ECR..."
+build_push_images() {
+    step "Building and pushing images to ECR..."
     aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
 
     docker build -t $INFERENCE_ECR_REPO:$GIT_SHA -f dockerfile .
@@ -146,19 +183,45 @@ if [ "$1" == "up" ]; then
     docker tag $MLFLOW_ECR_REPO:$GIT_SHA $MLFLOW_ECR_URI:latest
     docker push $MLFLOW_ECR_URI:$GIT_SHA
     docker push $MLFLOW_ECR_URI:latest
+}
 
-    echo "Step 9: Ensure the Airflow webserver secret key exists (fixed, not chart-regenerated -- regenerating invalidates all sessions)..."
+# The image tag to deploy. `up` builds and pushes $GIT_SHA, but `resume`
+# doesn't build at all -- if HEAD has moved since the last push, $GIT_SHA
+# names a tag that was never pushed and every pod would sit in ImagePullBackOff.
+# Fall back to :latest when the commit's tag isn't actually in ECR.
+resolve_image_tag() {
+    if aws ecr describe-images --repository-name $INFERENCE_ECR_REPO --region $REGION \
+        --image-ids imageTag=$GIT_SHA > /dev/null 2>&1; then
+        DEPLOY_TAG=$GIT_SHA
+    else
+        echo "No image tagged $GIT_SHA in ECR; falling back to :latest."
+        DEPLOY_TAG=latest
+    fi
+    echo "Deploying image tag: $DEPLOY_TAG"
+}
+
+deploy_workloads() {
+    resolve_image_tag
+
+    step "Ensuring the Airflow webserver secret key exists (fixed, not chart-regenerated -- regenerating invalidates all sessions)..."
     kubectl -n $AIRFLOW_NAMESPACE get secret airflow-webserver-secret > /dev/null 2>&1 || \
         kubectl -n $AIRFLOW_NAMESPACE create secret generic airflow-webserver-secret \
             --from-literal=webserver-secret-key=$(openssl rand -hex 16)
 
-    echo "Step 10: Deploying MLflow (before Airflow -- the DAG's env points at its Service DNS)..."
+    step "Ensuring the Grafana admin secret exists..."
+    # Created here rather than left to the chart's default admin/prom-operator.
+    kubectl -n $MONITORING_NAMESPACE get secret grafana-admin > /dev/null 2>&1 || \
+        kubectl -n $MONITORING_NAMESPACE create secret generic grafana-admin \
+            --from-literal=admin-user=admin \
+            --from-literal=admin-password=$(openssl rand -base64 18 | tr -d '/+=')
+
+    step "Deploying MLflow (before Airflow -- the DAG's env points at its Service DNS)..."
     helm upgrade --install $MLFLOW_RELEASE ./helm/asie-mlflow \
         --namespace $MLFLOW_NAMESPACE \
         --set image.repository=$MLFLOW_ECR_URI \
-        --set image.tag=$GIT_SHA
+        --set image.tag=$DEPLOY_TAG
 
-    echo "Step 11: Deploying Airflow..."
+    step "Deploying Airflow..."
     helm repo add apache-airflow https://airflow.apache.org > /dev/null 2>&1 || true
     helm repo update apache-airflow > /dev/null
     helm upgrade --install $AIRFLOW_RELEASE apache-airflow/airflow \
@@ -166,18 +229,9 @@ if [ "$1" == "up" ]; then
         --namespace $AIRFLOW_NAMESPACE \
         -f eks/airflow-values.yaml \
         --set images.airflow.repository=$AIRFLOW_ECR_URI \
-        --set images.airflow.tag=$GIT_SHA
+        --set images.airflow.tag=$DEPLOY_TAG
 
-    echo "Step 12: Ensure the Grafana admin secret exists..."
-    # Created here rather than left to the chart's default admin/prom-operator.
-    # Generated once and reused -- regenerating on every run would silently
-    # change the password out from under whoever has it saved.
-    kubectl -n $MONITORING_NAMESPACE get secret grafana-admin > /dev/null 2>&1 || \
-        kubectl -n $MONITORING_NAMESPACE create secret generic grafana-admin \
-            --from-literal=admin-user=admin \
-            --from-literal=admin-password=$(openssl rand -base64 18 | tr -d '/+=')
-
-    echo "Step 13: Deploying kube-prometheus-stack (before inference -- it owns the ServiceMonitor CRD)..."
+    step "Deploying kube-prometheus-stack (before inference -- it owns the ServiceMonitor CRD)..."
     helm repo add prometheus-community https://prometheus-community.github.io/helm-charts > /dev/null 2>&1 || true
     helm repo update prometheus-community > /dev/null
     helm upgrade --install $MONITORING_RELEASE prometheus-community/kube-prometheus-stack \
@@ -185,63 +239,61 @@ if [ "$1" == "up" ]; then
         -f eks/monitoring-values.yaml \
         --wait --timeout 10m
 
-    echo "Step 14: Applying PrometheusRule and Grafana dashboard..."
-    # After the stack, since both depend on CRDs/labels it establishes.
+    step "Applying PrometheusRule and Grafana dashboard..."
     kubectl apply -f eks/monitoring-rules.yaml
     kubectl apply -f eks/grafana-dashboard-asie.yaml
 
-    echo "Step 15: Deploying inference application..."
+    step "Deploying inference application..."
     # serviceMonitor.enabled is off by default so the chart installs on a
-    # cluster without the Prometheus Operator; it's safe to turn on here
-    # because Step 13 has just installed the CRD.
+    # cluster without the Prometheus Operator; safe to turn on here because
+    # the stack above has just installed the CRD.
     helm upgrade --install $INFERENCE_RELEASE ./helm/asie-inference \
         --namespace $INFERENCE_NAMESPACE \
         --set image.repository=$INFERENCE_ECR_URI \
-        --set image.tag=$GIT_SHA \
+        --set image.tag=$DEPLOY_TAG \
         --set serviceAccount.name=asie-irsa-sa \
         --set serviceMonitor.enabled=true
 
-    echo "Step 16: Applying the shared ALB Ingress..."
+    step "Applying the shared ALB Ingress..."
     kubectl apply -f eks/ingress.yaml
+}
 
-    echo "Step 17: Waiting for the ALB to be provisioned..."
+wait_for_alb() {
+    step "Waiting for the ALB to be provisioned..."
     # The Service is ClusterIP now -- the ALB address lives on the Ingress.
+    ALB=""
     for i in $(seq 1 30); do
         ALB=$(kubectl get ingress -n $INFERENCE_NAMESPACE asie-inference \
-              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
         [ -n "$ALB" ] && break
         sleep 20
     done
     kubectl get ingress -A
     if [ -n "$ALB" ]; then
-        echo "Setup complete!"
+        echo ""
         echo "  Inference API : http://$ALB/"
         echo "  Grafana       : http://$ALB/grafana"
         echo "  Grafana admin password: kubectl -n $MONITORING_NAMESPACE get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d"
-        echo "  Airflow/MLflow UIs are ClusterIP -- reach them with kubectl port-forward (see eks/ingress.yaml)."
+        echo "  Airflow/MLflow UIs are ClusterIP -- use kubectl port-forward (see eks/ingress.yaml)."
     else
-        echo "Setup complete, but the ALB has no address yet. Check: kubectl describe ingress -n $INFERENCE_NAMESPACE asie-inference"
+        echo "The ALB has no address yet. Check: kubectl describe ingress -n $INFERENCE_NAMESPACE asie-inference"
     fi
+}
 
-fi
-# -------------------------------
-# TEARDOWN
-# -------------------------------
-if [ "$1" == "down" ]; then
-    echo "Starting CLEAN TEARDOWN..."
+# ---------------------------------------------------------------------------
+# TEAR-DOWN PHASES
+# ---------------------------------------------------------------------------
 
-    # The Ingress goes FIRST and on its own. It owns the shared ALB, and the
-    # ALB's ENIs sit in the VPC subnets -- deleting the namespace out from
-    # under it can orphan the load balancer, after which terraform destroy
-    # hangs trying to delete subnets that still have attachments. Deleting the
-    # Ingress lets the controller tear the ALB down cleanly first.
-    echo "Step 1: Deleting the shared ALB Ingress and waiting for it to drain..."
-    kubectl delete -f eks/ingress.yaml --ignore-not-found
+teardown_workloads() {
+    # The Ingress goes FIRST and on its own. It owns the shared ALB, whose ENIs
+    # sit in the VPC subnets -- deleting the namespace out from under it can
+    # orphan the load balancer, after which terraform destroy hangs trying to
+    # delete subnets that still have attachments.
+    step "Deleting the shared ALB Ingress and waiting for it to drain..."
+    kubectl delete -f eks/ingress.yaml --ignore-not-found || true
     sleep 45
 
-    # Helm releases (and any LoadBalancer/ELB-owning Services) must also go
-    # before the cluster, for the same ENI reason.
-    echo "Step 2: Deleting Helm releases..."
+    step "Deleting Helm releases..."
     helm uninstall $INFERENCE_RELEASE -n $INFERENCE_NAMESPACE || true
     helm uninstall $AIRFLOW_RELEASE -n $AIRFLOW_NAMESPACE || true
     helm uninstall $MLFLOW_RELEASE -n $MLFLOW_NAMESPACE || true
@@ -250,27 +302,180 @@ if [ "$1" == "down" ]; then
     # PVCs are not removed by `helm uninstall` -- the operator's volumeClaim
     # templates leave them behind, and an orphaned PVC keeps its EBS volume
     # alive and billing after the cluster is gone.
-    echo "Step 3: Deleting monitoring PVCs (helm uninstall leaves these behind)..."
+    step "Deleting monitoring PVCs (helm uninstall leaves these behind)..."
     kubectl delete pvc --all -n $MONITORING_NAMESPACE --ignore-not-found || true
 
-    echo "Step 4: Deleting namespaces..."
-    kubectl delete namespace $INFERENCE_NAMESPACE $AIRFLOW_NAMESPACE $MLFLOW_NAMESPACE $MONITORING_NAMESPACE --ignore-not-found
+    step "Deleting namespaces..."
+    kubectl delete namespace $INFERENCE_NAMESPACE $AIRFLOW_NAMESPACE $MLFLOW_NAMESPACE $MONITORING_NAMESPACE --ignore-not-found || true
+}
 
-    echo "Step 5: Deleting EKS Cluster..."
+delete_cluster() {
+    step "Deleting the EKS cluster..."
     eksctl delete cluster --name $CLUSTER_NAME --region $REGION || true
+}
 
-    # ECR repos are Terraform-owned (aws-provision/main.tf) -- destroyed by
-    # the step below, not deleted here separately.
-    echo "Step 6: Destroying AWS infrastructure with Terraform..."
+destroy_infra() {
+    # ECR repos and the S3 bucket are Terraform-owned and carry
+    # force_delete/force_destroy, so this completes even when they hold
+    # images/objects rather than failing halfway through.
+    step "Destroying AWS infrastructure with Terraform..."
     cd aws-provision
     terraform destroy -auto-approve
     cd ..
 
-    echo "Teardown complete! ALL resources have been cleaned up."
-fi
+    # These were created with `aws iam create-policy` / eksctl --role-only, so
+    # neither Terraform nor `eksctl delete cluster` owns them. Left behind they
+    # accumulate and collide with the next `up`.
+    step "Removing leftover IAM policies and roles..."
+    for p in AsieInferenceS3Policy AsieAirflowS3Policy AsieMlflowS3Policy AWSLoadBalancerControllerIAMPolicy; do
+        arn="arn:aws:iam::${ACCOUNT_ID}:policy/$p"
+        # A policy can't be deleted while any non-default version exists.
+        for v in $(aws iam list-policy-versions --policy-arn "$arn" \
+                    --query 'Versions[?!IsDefaultVersion].VersionId' --output text 2>/dev/null); do
+            aws iam delete-policy-version --policy-arn "$arn" --version-id "$v" 2>/dev/null || true
+        done
+        aws iam delete-policy --policy-arn "$arn" 2>/dev/null && echo "  deleted $p" || true
+    done
+    aws iam detach-role-policy --role-name AmazonEKS_EBS_CSI_DriverRole_asie \
+        --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy 2>/dev/null || true
+    aws iam delete-role --role-name AmazonEKS_EBS_CSI_DriverRole_asie 2>/dev/null \
+        && echo "  deleted AmazonEKS_EBS_CSI_DriverRole_asie" || true
+}
 
-# Usage instructions:
-# To set up the entire infrastrucrture and deploy the application, run:
-# ./asie.sh up
-# To tear down and clean up all resources, run:
-# ./asie.sh down
+confirm_destroy() {
+    # `down` is the only irreversible command here, and the things it destroys
+    # (models in S3, RDS with skip_final_snapshot) are expensive or impossible
+    # to restore. Everything else in this script is safe to re-run.
+    local models dbsize
+    models=$(aws s3 ls "s3://$S3_BUCKET/models/" --recursive --summarize 2>/dev/null \
+             | grep "Total Objects" || echo "  Total Objects: unknown")
+
+    cat <<EOF
+
+  ============================================================
+   asie.sh down -- THIS PERMANENTLY DESTROYS DATA
+  ============================================================
+
+  Will be destroyed, with no backup and no recovery:
+
+    * S3 bucket $S3_BUCKET
+      including all versions of:
+        - models/           ($(echo "$models" | tr -s ' ' | cut -d: -f2 | tr -d ' ') objects)
+        - mlflow-artifacts/ (all experiment artifacts)
+        - dvc-data/         (the DVC remote)
+    * RDS instance asie-db
+      skip_final_snapshot is on: inference_logs, drift_metrics and
+      all Airflow/MLflow history are gone, with NO final snapshot.
+    * All 3 ECR repositories and every image in them
+    * The EKS cluster, VPC, NAT gateway and subnets
+    * The IAM policies and roles created outside Terraform
+
+  Re-uploading models to S3 needs a working, sustained upload --
+  if that is currently unreliable, use './asie.sh pause' instead:
+  it removes compute cost but keeps every byte of data.
+
+EOF
+
+    if [ ! -t 0 ]; then
+        echo "Refusing to destroy non-interactively. Re-run from a terminal." >&2
+        exit 1
+    fi
+
+    printf "  Type exactly 'destroy asie' to proceed: "
+    read -r reply
+    if [ "$reply" != "destroy asie" ]; then
+        echo "  Aborted. Nothing has been changed."
+        exit 1
+    fi
+}
+
+usage() {
+    cat <<EOF
+Usage: ./asie.sh <command>
+
+  up       Provision infrastructure, build and push images, deploy everything.
+           Safe to re-run; every step is idempotent.
+
+  pause    Delete the EKS cluster and workloads. KEEPS S3, ECR, RDS and the
+           VPC, so no data is lost. Removes most of the hourly cost (the
+           nodes and the control plane); NAT gateway and RDS keep running.
+
+  resume   Rebuild the cluster and redeploy on top of the surviving data.
+           Skips Terraform and the image build, since neither was torn down.
+
+  down     Destroy EVERYTHING, including all data in S3 and RDS.
+           Irreversible. Asks for confirmation first.
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# COMMANDS
+# ---------------------------------------------------------------------------
+
+case "$1" in
+    up)
+        require_aws
+        echo "Starting FULL SETUP..."
+        provision_infra
+        create_cluster
+        cluster_addons
+        ensure_namespaces
+        create_irsa
+        bootstrap_db
+        upload_models
+        build_push_images
+        deploy_workloads
+        wait_for_alb
+        echo ""
+        echo "Setup complete."
+        ;;
+
+    pause)
+        require_aws
+        echo "PAUSING -- deleting compute, keeping all data..."
+        teardown_workloads
+        delete_cluster
+        cat <<EOF
+
+Paused. Still present (and still billing, but far less):
+  - S3 bucket $S3_BUCKET (models, artifacts, DVC data)
+  - ECR repositories and images
+  - RDS instance asie-db
+  - VPC and NAT gateway
+
+Bring it back with: ./asie.sh resume
+EOF
+        ;;
+
+    resume)
+        require_aws
+        echo "RESUMING -- rebuilding compute on existing data..."
+        # No provision_infra: Terraform-managed resources were never removed.
+        # No upload_models / build_push_images: S3 and ECR survived the pause.
+        create_cluster
+        cluster_addons
+        ensure_namespaces
+        create_irsa
+        bootstrap_db
+        deploy_workloads
+        wait_for_alb
+        echo ""
+        echo "Resume complete."
+        ;;
+
+    down)
+        require_aws
+        confirm_destroy
+        echo "Starting CLEAN TEARDOWN..."
+        teardown_workloads
+        delete_cluster
+        destroy_infra
+        echo ""
+        echo "Teardown complete. All resources destroyed."
+        ;;
+
+    *)
+        usage
+        exit 1
+        ;;
+esac

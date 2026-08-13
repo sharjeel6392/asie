@@ -42,6 +42,17 @@ module "rds" {
 resource "aws_s3_bucket" "platform" {
   bucket = "asie-platform-${data.aws_caller_identity.current.account_id}"
 
+  # Required for `asie.sh down` to actually complete. Without it Terraform
+  # errors with BucketNotEmpty -- but only after it has already destroyed RDS
+  # and the VPC, since the bucket has no dependency on either. That leaves a
+  # half-destroyed stack, which is worse than either finishing or refusing.
+  #
+  # This deletes every object AND every version (versioning is on below), so
+  # the models and DVC data go with it. `asie.sh down` gates on a typed
+  # confirmation for exactly this reason, and `asie.sh pause` exists so
+  # cost-saving never has to reach for `down`.
+  force_destroy = true
+
   tags = {
     Name = "asie-platform"
   }
@@ -103,6 +114,11 @@ resource "aws_ecr_repository" "inference" {
   name                 = "asie-inference-repo"
   image_tag_mutability = "MUTABLE"
 
+  # Same reason as the S3 bucket's force_destroy: without this, destroying a
+  # repo that still holds images fails, and it fails partway through the
+  # teardown rather than up front.
+  force_delete = true
+
   image_scanning_configuration {
     scan_on_push = true
   }
@@ -115,6 +131,11 @@ resource "aws_ecr_repository" "inference" {
 resource "aws_ecr_repository" "airflow" {
   name                 = "asie-airflow-repo"
   image_tag_mutability = "MUTABLE"
+
+  # Same reason as the S3 bucket's force_destroy: without this, destroying a
+  # repo that still holds images fails, and it fails partway through the
+  # teardown rather than up front.
+  force_delete = true
 
   image_scanning_configuration {
     scan_on_push = true
@@ -130,6 +151,11 @@ resource "aws_ecr_repository" "airflow" {
 resource "aws_ecr_repository" "mlflow" {
   name                 = "asie-mlflow-repo"
   image_tag_mutability = "MUTABLE"
+
+  # Same reason as the S3 bucket's force_destroy: without this, destroying a
+  # repo that still holds images fails, and it fails partway through the
+  # teardown rather than up front.
+  force_delete = true
 
   image_scanning_configuration {
     scan_on_push = true
