@@ -33,6 +33,16 @@ exported_model/
 # Data: keep manifests and DVC pointers only — the DAG runs `dvc pull`
 data/*
 !data/data_manifest.yaml
+# The parquet itself stays out of the image (it comes from the DVC remote at
+# run time), but the .dvc pointer must be in, or `dvc pull` has nothing to
+# resolve. Same for .dvc/config, which names the S3 remote.
+#
+# Exact path, NOT `!data/*.dvc`. A wildcard negation defeats BuildKit's
+# directory-pruning optimisation and makes it walk into every excluded
+# directory -- including .venv/, whose lib64 is a WSL symlink Windows cannot
+# stat, which fails the build with
+#   "error from sender: open .venv\lib64: The file cannot be accessed"
+!data/financial_phrasebank.parquet.dvc
 !data/*.dvc
 
 # Stale duplicate airflow dir (airflow-home/ is the active one, kept)

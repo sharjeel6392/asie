@@ -2,8 +2,14 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
 import logging
+import os
 from airflow.exceptions import AirflowSkipException
 from src.constants import DRIFT_THRESHOLD
+
+# Matches PYTHONPATH/WORKDIR in Dockerfile.airflow. The training pipeline
+# resolves its dataset relative to the working directory, so dvc pull has to
+# run from the same place.
+PROJECT_DIR = os.getenv("ASIE_PROJECT_DIR", "/opt/airflow/asie")
 
 # MLFLOW_TRACKING_URI comes from the chart's env (eks/airflow-values.yaml)
 # and src/ is importable via PYTHONPATH=/opt/airflow/asie (Dockerfile.airflow)
@@ -11,6 +17,40 @@ from src.constants import DRIFT_THRESHOLD
 
 from src.pipelines.retraining_pipeline import retraining_pipeline
 from src.drift.storage.drift_metrics_repository import get_latest_drift_metric
+
+
+def dvc_pull(**context):
+    """Fetch the training data from the S3 DVC remote.
+
+    The dataset is deliberately not baked into the image -- the whole point of
+    the DVC remote is to be the single source of truth for it, and the image
+    only carries .dvc/config plus the data/*.dvc pointers. Without this task
+    the pipeline dies on a missing ./data/financial_phrasebank.parquet, which
+    is exactly how it failed the first time it ran in-cluster.
+
+    Credentials come from the pod's IRSA role (airflow-irsa-sa), which has
+    read access to the dvc-data/ prefix -- no keys involved.
+    """
+    import subprocess
+
+    proc = subprocess.run(
+        ["dvc", "pull", "--force"],
+        cwd=PROJECT_DIR,
+        capture_output=True,
+        text=True,
+    )
+    logging.info("dvc pull stdout:\n%s", proc.stdout)
+    if proc.returncode != 0:
+        logging.error("dvc pull stderr:\n%s", proc.stderr)
+        raise RuntimeError(f"dvc pull failed with exit code {proc.returncode}")
+
+    expected = os.path.join(PROJECT_DIR, "data", "financial_phrasebank.parquet")
+    if not os.path.exists(expected):
+        raise RuntimeError(
+            f"dvc pull reported success but {expected} is still missing"
+        )
+    logging.info("Dataset present: %s (%d bytes)", expected, os.path.getsize(expected))
+    return True
 
 
 def check_drift(**context):
@@ -58,9 +98,14 @@ def run_retraining(**context):
         logging.info(f"Pipeline completed successfully with status: {result['status']}")
         logging.info("=" * 80)
     
-    except Exception as e:
+    except Exception:
         logging.error("=" * 80)
-        logging.error(f"RETRAINING TASK FAILED: {str(e)}")
+        # logging.exception, not logging.error(str(e)) -- the latter discards
+        # the traceback. When this failed in-cluster the only recorded message
+        # was "maximum recursion depth exceeded", which was transformers' lazy
+        # importer masking the real cause (an MLflow 403). The traceback is the
+        # difference between a five-minute diagnosis and an hour of guessing.
+        logging.exception("RETRAINING TASK FAILED")
         logging.error("=" * 80)
         raise
 
@@ -76,6 +121,12 @@ with DAG(
     schedule="@daily",  
     catchup=False,
 ) as dag:
+    dvc_task = PythonOperator(
+        task_id="dvc_pull",
+        python_callable=dvc_pull,
+        provide_context=True,
+    )
+
     drift_task = PythonOperator(
         task_id="check_drift",
         python_callable=check_drift,
@@ -88,4 +139,6 @@ with DAG(
         provide_context=True,
     )
 
-    drift_task >> retrain_task
+    # dvc_pull runs first so a missing dataset fails loudly on its own task,
+    # rather than surfacing deep inside the training pipeline.
+    dvc_task >> drift_task >> retrain_task

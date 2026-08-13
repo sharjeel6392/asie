@@ -23,4 +23,16 @@ WORKDIR /opt/airflow/asie
 COPY --chown=airflow:root src/ ./src/
 COPY --chown=airflow:root configs/ ./configs/
 COPY --chown=airflow:root pyproject.toml .
+# DVC scaffolding, not the data. .dvc/config names the S3 remote and
+# data/*.dvc are the pointers `dvc pull` resolves against it -- without both,
+# the retraining DAG's dvc_pull task has nothing to work with and the pipeline
+# dies on a missing ./data/financial_phrasebank.parquet.
+#
+# Exact paths, no globs. `COPY data/*.dvc` makes BuildKit walk the tree to
+# resolve the wildcard, which reaches .venv/lib64 -- a WSL symlink Windows
+# cannot stat -- and fails the build with
+#   "error from sender: open .venv\lib64: The file cannot be accessed"
+# even though .venv/ is in the dockerignore.
+COPY --chown=airflow:root .dvc/config ./.dvc/config
+COPY --chown=airflow:root data/financial_phrasebank.parquet.dvc ./data/
 COPY --chown=airflow:root airflow-home/dags/ /opt/airflow/dags/
