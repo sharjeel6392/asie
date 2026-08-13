@@ -2,6 +2,15 @@
 # torch is installed separately (CPU wheel, see Dockerfile.airflow) so
 # it's not listed here.
 transformers==4.57.6
+# Required by src/models/hf_model.py, which the retraining DAG imports via
+# src.models.factory. It was dropped when requirements_inference.txt was split
+# into serving/airflow sets, so the DAG failed at import with
+# ModuleNotFoundError and Airflow listed zero DAGs -- the scheduler and
+# webserver were both healthy, which is why it wasn't obvious.
+# Not restoring the old datasets==2.21.0 pin: that predates the numpy 2.x
+# pinned below. 5.0.1 is what pip resolves against numpy 2.4.1 / pyarrow 22,
+# pinned here so the image stays reproducible.
+datasets==5.0.1
 scikit-learn==1.8.0
 pandas==2.3.3
 numpy==2.4.1
