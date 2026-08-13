@@ -19,7 +19,7 @@ ASIE offers a suite of features engineered for MLOps maturity:
 - **Comprehensive Experiment Tracking**: Leveraging MLflow for logging dataset hashes, runtime configurations, environment snapshots, Git commit hashes, metrics, and auxiliary artifacts.
 - **Immutable Model Promotion**: A defined process to convert experimental runs into approved, versioned release artifacts for serving.
 - **Advanced Data Versioning**: Treating datasets as identified, versioned artifacts with explicit structure and lineage, independent of training code.
-- **Secure Cloud Deployment**: Implementing robust AWS infrastructure patterns including private subnets, bastion hosts, ECR, and IAM roles for credential-free operations.
+- **Secure Cloud Deployment**: Implementing robust AWS infrastructure patterns including private subnets, SSM Session Manager access, ECR, and IAM roles for credential-free operations.
 - **Kubernetes-Native Orchestration**: Running the inference service on Amazon EKS with Helm-managed deployments, CPU-based autoschaling (HPA), self-healing via liveness probes, and zero-downtime rolling updates.
 - **Structured Inference Logging**: Dedicated SQLite-based logging for online predictions, capturing detailed metadata, latency, and confidence scores.
 - **Multi-Signal Drift Detection**: A time-windowed drift detection engine that monitors input distribution, output label distribution, confidence score shifts, and shadow model disagreement —  enabling proactive detection of model degradation before acciracy metrics are available.
@@ -206,11 +206,13 @@ flowchart LR
 
 **Synthetic Drift Injection**
 
-To validate detection sensitivity without waiting for real-world drift, the system supports synthetic drift injection — introducing controlled perturbations (e.g., sland substitution, tone shifts) into inference inputs. This enables reproducible calibration of detection thresholds and confirms the engine responds corectly before it is needed in production.
+To validate detection sensitivity without waiting for real-world drift, the system supports synthetic drift injection — introducing controlled perturbations (e.g., slang substitution, tone shifts) into inference inputs. This enables reproducible calibration of detection thresholds and confirms the engine responds correctly before it is needed in production.
 
 **Current State**
 
-Drift detection is currently triggered manually against a specified time window. Automated triggering, alerting via Prometheus and Grafana, and integrating with the retraining loop are the subject of the next development phase.
+Drift detection runs against a specified time window and can be invoked directly (`GET /drift`) or on a schedule by the Airflow retraining DAG. The score is exported as the `asie_data_drift_score` Prometheus gauge, alerted on in-cluster by Alertmanager, and gates retraining: the DAG only retrains when drift crosses the configured threshold.
+
+The score gauge is exported alongside `asie_drift_last_updated_timestamp_seconds`, the age of the newest `drift_metrics` row. This matters more than it looks: the score query returns the newest row *regardless of age*, so a stopped drift worker is otherwise indistinguishable from a healthy low-drift system, and neither drift alert could ever fire. The staleness metric is what makes that condition alertable.
 
 ### Alerts & Triggers
 
@@ -384,7 +386,7 @@ resources:
 
 The hardened local setup was migrated to a managed EKS cluster, reusing the existing Terraform-provisioned VPC and integrating with AWS-native services.
 
-- **Infrastructure (Terraform + eksctl)**: The existing VPC was extended to support EKS — public subnets host the load balancer and NAT Gateway, private subnets host worker nodes, and the bastion host is retained for secure debugging access. The EKS cluster itself, including the managed control plane and node group, was provisioned using `eksctl`.
+- **Infrastructure (Terraform + eksctl)**: The existing VPC was extended to support EKS — public subnets host the load balancer and NAT Gateway, private subnets host worker nodes. The bastion host and its SSH key pair were dropped in favour of SSM Session Manager, which removes the key material entirely. The EKS cluster itself, including the managed control plane and node group, was provisioned using `eksctl`.
 
 - **Application Deployment (Helm)**: Kubernetes manifests were converted into a reusable Helm chart, enabling parameterized, version-controlled deployments and seamless upgrades across environments.
 
@@ -446,19 +448,20 @@ Failure handline:
 
 To consolidate the full infrastructure lifecycle into a single, repeatable interface, a unified shell script (`asie.sh`) was introduced. It encapsulates the entire provisioning and teardown sequence, eliminating manual multi-step coordination.
 
-```bash
-# Full cluster setup
-./asie.sh up
-```
-
-This performs, in order:
-Terraform provisioning (VPC, subnets, NAT Gateway, bastion), Docker image build and push to ECR, EKS cluster creation, OIDC provider setup for IRSA, `kubeconfig` update, IRSA service account creation, Helm deployment, and load balancer provisioning.
+Four commands, all composed from the same internal phase functions so they cannot drift apart — a `resume` that ran a different sequence than `up` would only fail in production.
 
 ```bash
-# Full teardown
-./asie.sh down
+./asie.sh up       # provision, build, push, deploy everything
+./asie.sh pause    # delete compute, KEEP all data
+./asie.sh resume   # rebuild compute on the surviving data
+./asie.sh down     # destroy everything, irreversibly
 ```
-Teeardown removes the Helm release, Kubernetes namespace, EKS cluster, ECR repository, and all Terraform-managed infrastructure — ensuring zero residual AWS resources and no idle costs between development sessions.
+
+**`up`** performs, in order: Terraform provisioning (VPC, subnets, NAT Gateway, RDS, S3, three ECR repositories), EKS cluster creation with OIDC for IRSA, the EBS CSI driver addon and a gp3 StorageClass, namespaces, one least-privilege IRSA service account per workload, RDS bootstrap (databases, roles, schema), model upload to S3, image build and push, then Helm deployment of MLflow, Airflow, kube-prometheus-stack and the inference service, and finally the shared ALB Ingress. It is idempotent and safe to re-run.
+
+**`pause` / `resume`** exist because cost control should not require destroying data. `pause` removes the cluster and workloads — roughly $10.60/day of the ~$12 total — while leaving S3, ECR, RDS and the VPC intact; `resume` rebuilds on top of them, skipping Terraform and the image build since neither was torn down.
+
+**`down`** destroys everything, including all objects in S3 and the RDS instance with no final snapshot. It is gated behind a typed confirmation listing exactly what will be lost, and refuses to run non-interactively so an automated invocation cannot wipe the account.
 
 ## 🛠 How to Use ASIE
 
@@ -506,7 +509,9 @@ This sends baseline, gradually-slang-drifted, and extreme-drift inference reques
 
 ### Running the Alerts & Triggers Pipeline
 
-The alerting pipeline requires the FastAPI service and Prometheus to be running concurrently.
+> **In-cluster, this is already running.** `./asie.sh up` deploys kube-prometheus-stack into the `monitoring` namespace: Prometheus discovers the inference service through a ServiceMonitor, the drift and API alert rules ship as a `PrometheusRule` CR (`eks/monitoring-rules.yaml`), and Alertmanager posts to the service's `/webhook/drift` endpoint over cluster DNS. Grafana is served on the shared ALB at `/grafana`.
+>
+> The steps below are the **local development** path, where the three processes are run by hand against `localhost`.
 
 **1. Start the FastAPI inference service**
 
@@ -586,7 +591,7 @@ Once complete, the inference API is accessible via the load balancer URL.
 ```bash
 ./asie.sh down
 ```
-This removes the Helm release, Kubernetes namespace, EKS cluster, ECR repository, and all Terraform-managed infrastructure, leaving zero residual AWS resources.
+This removes the Helm releases, Kubernetes namespaces, EKS cluster, all three ECR repositories, and every Terraform-managed resource including the S3 bucket and RDS instance, leaving zero residual AWS resources. It prompts for confirmation first; use `./asie.sh pause` to stop paying for compute without destroying data.
 
 ### Interacting with the Inference Service
 
@@ -644,8 +649,13 @@ ASIE transforms the development of sentiment analysis models into a mature, soft
 
 ## 🚧 Work in Progress
 
-ASIE is continuously evolving to incorporate advanced MLOps practices and enhance its production readiness. Current development efforts are focused on:
+ASIE is continuously evolving to incorporate advanced MLOps practices and enhance its production readiness.
 
-2.  **Automated Retraining (Closed Training Loop)**: Developing a fully automated retraining pipeline, orchestrated by Airflow DAGs, to create a closed-loop system for continuous model improvement. This involves automated data fetching, training, evaluation, and model registration.
-3.  **Production-Real Retraining**: Optimizing the retraining process for production environments, including leveraging GPU jobs, FP16 precision for faster training, and utilizing AWS spot instances for cost-efficiency.
+**Now shipped** (Week 11 — AWS migration): the closed retraining loop runs as an Airflow DAG on EKS, gated on the drift score; models live in S3 and are fetched at pod startup rather than baked into the image; inference logs and drift metrics are in RDS Postgres instead of SQLite; and monitoring runs in-cluster via kube-prometheus-stack with Grafana behind a shared ALB.
+
+Current development efforts are focused on:
+
+1.  **Production-Real Retraining**: Optimizing the retraining process for production environments, including leveraging GPU jobs, FP16 precision for faster training, and utilizing AWS spot instances for cost-efficiency.
+2.  **Ingress consolidation for the remaining UIs**: the Airflow and MLflow interfaces are still reached with `kubectl port-forward`. Both need their own public base URL to generate working links, which is the ALB's DNS name — so wiring them requires a two-pass deploy (apply Ingress, read the hostname, upgrade both charts).
+3.  **Secrets delivery**: connection strings are currently plain Kubernetes Secrets created at deploy time. External Secrets Operator, with rotation, is the intended upgrade.
 4.  **GitOps Deployment (Automated Model Rollout)**: Implementing GitOps principles with ArgoCD to automate model rollouts, enabling controlled rolling updates and streamlined model promotion across different environments.
