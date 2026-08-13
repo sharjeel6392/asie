@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+      - name: mlflow
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        # --no-serve-artifacts is deliberate: since MLflow 2.0 the server
+        # proxies artifacts by default, which would route uploads through
+        # mlflow-artifacts:/ instead of the s3:// root below, funneling
+        # every model upload through this one pod. Direct client->S3
+        # matches the IAM policies (airflow has rw on mlflow-artifacts/*).
+        command: ["mlflow", "server"]
+        args:
+        - --backend-store-uri=$(MLFLOW_BACKEND_STORE_URI)
+        - --default-artifact-root={{ .Values.artifactRoot }}
+        - --no-serve-artifacts
+        - --host=0.0.0.0
+        - --port=5000
+        - --workers={{ .Values.workers }}
+        env:
+        - name: MLFLOW_BACKEND_STORE_URI
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.secretName }}
+              key: {{ .Values.database.secretKey }}
+        - name: AWS_DEFAULT_REGION
+          value: {{ .Values.aws.region | quote }}
+        ports:
+        - containerPort: 5000
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        # First boot runs Alembic migrations against an empty mlflow_db —
+        # slow enough to trip a bare liveness probe.
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          failureThreshold: 30
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 10

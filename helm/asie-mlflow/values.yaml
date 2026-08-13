@@ -1,0 +1,31 @@
+image:
+  repository: 818111885210.dkr.ecr.ap-south-1.amazonaws.com/asie-mlflow-repo
+  tag: latest
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  name: mlflow-irsa-sa
+
+database:
+  secretName: mlflow-db
+  secretKey: MLFLOW_BACKEND_STORE_URI
+
+artifactRoot: "s3://asie-platform-818111885210/mlflow-artifacts/"
+aws:
+  region: ap-south-1
+
+# 2 gunicorn workers, not the default 4 — RDS is db.t4g.micro and each
+# worker holds its own connection pool.
+workers: 2
+
+service:
+  type: ClusterIP
+  port: 5000
+
+resources:
+  requests:
+    cpu: "300m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"

@@ -1,0 +1,5 @@
+[core]
+    remote = s3remote
+['remote "s3remote"']
+    url = s3://asie-platform-818111885210/dvc-data
+    region = ap-south-1
