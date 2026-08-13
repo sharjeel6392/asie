@@ -1,0 +1,28 @@
+# EKS ships a "gp2" StorageClass marked default, but gp2 is the older volume
+# type: gp3 is cheaper per GiB and gives a 3000 IOPS / 125 MB/s baseline that
+# doesn't scale with volume size the way gp2's does. Prometheus does enough
+# small writes that the baseline matters at the volume sizes used here.
+#
+# This is marked default AND the built-in gp2 class is left alone -- so the
+# cluster briefly has two defaults if gp2 still claims the annotation.
+# asie.sh patches gp2's is-default-class annotation to "false" when applying
+# this, since two defaults makes PVC binding non-deterministic.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+# Retain-on-delete would leak volumes every teardown; these hold metrics, not
+# anything we need to survive `asie.sh down`.
+reclaimPolicy: Delete
+# The default (Immediate) can bind a volume in an AZ that has no schedulable
+# node for the pod, leaving it permanently unschedulable. EBS volumes are
+# AZ-scoped and this cluster spans two AZs, so binding must wait for the
+# scheduler to pick a node first.
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true

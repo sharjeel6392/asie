@@ -1,0 +1,32 @@
+{{- if .Values.serviceMonitor.enabled }}
+# Gated deliberately: ServiceMonitor is a CRD owned by the Prometheus
+# Operator. On a cluster where kube-prometheus-stack isn't installed yet the
+# CRD doesn't exist, and an ungated manifest makes the whole `helm install`
+# fail with "no matches for kind ServiceMonitor" -- which would mean the
+# inference chart could no longer be deployed on its own.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+    {{- with .Values.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  # This ServiceMonitor lives in the app's namespace, not Prometheus's, so
+  # Prometheus must be configured to look outside its own release
+  # (serviceMonitorSelectorNilUsesHelmValues: false in monitoring-values.yaml).
+  namespaceSelector:
+    matchNames:
+    - {{ .Release.Namespace }}
+  endpoints:
+  # By port NAME, matching service.yaml's `name: http`.
+  - port: http
+    path: {{ .Values.serviceMonitor.path }}
+    interval: {{ .Values.serviceMonitor.interval }}
+    scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
+{{- end }}

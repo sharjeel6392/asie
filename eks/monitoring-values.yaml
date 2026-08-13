@@ -1,0 +1,176 @@
+# Values for prometheus-community/kube-prometheus-stack, installed into the
+# `monitoring` namespace created on Day 3.
+#
+# Resource budget is deliberate, not copied from the chart defaults. The
+# cluster is 2x t3.xlarge (~7.8 allocatable CPU total). Inference alone can
+# request 4.5 (HPA max 3 x 1.5 CPU), plus Airflow and MLflow. The chart's
+# default Prometheus request would make pods unschedulable once the HPA
+# scales, so every component here is sized explicitly.
+
+fullnameOverride: kube-prom
+
+# ---------------------------------------------------------------------------
+# Prometheus
+# ---------------------------------------------------------------------------
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    retentionSize: 8GB
+
+    # THE setting that makes cross-namespace scraping work. The chart defaults
+    # these to true, which silently restricts Prometheus to ServiceMonitors
+    # carrying its own release label -- so the asie-inference ServiceMonitor
+    # in another namespace is ignored and the Targets page just looks empty
+    # with no error anywhere. This is the single most common
+    # "why is nothing being scraped" cause.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "1Gi"
+      limits:
+        cpu: "1"
+        memory: "2Gi"
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+  service:
+    type: ClusterIP
+
+# ---------------------------------------------------------------------------
+# Grafana
+# ---------------------------------------------------------------------------
+grafana:
+  enabled: true
+
+  # Pinned so the Service name is deterministic -- eks/ingress.yaml routes to
+  # it by name, and the subchart's default (<release>-grafana) would change
+  # if the release were ever renamed.
+  fullnameOverride: asie-grafana
+
+  # Password comes from a Secret created by asie.sh, never from this file and
+  # never left at the chart's default admin/prom-operator.
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+
+  # Required for path-based routing behind the shared ALB. Without
+  # serve_from_sub_path Grafana emits asset/redirect URLs rooted at / and the
+  # UI breaks the moment it's served under /grafana.
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s/grafana/"
+      serve_from_sub_path: true
+
+  persistence:
+    enabled: true
+    storageClassName: gp3
+    size: 5Gi
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  # Picks up any ConfigMap labelled grafana_dashboard=1 (see
+  # eks/grafana-dashboard-asie.yaml), so dashboards are version-controlled
+  # manifests rather than hand-drawn state living only in Grafana's database.
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+
+  service:
+    type: ClusterIP
+
+# ---------------------------------------------------------------------------
+# Alertmanager -- port of the local alertmanager.yml
+# ---------------------------------------------------------------------------
+alertmanager:
+  enabled: true
+
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+
+  config:
+    route:
+      receiver: "webhook-receiver"
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 3h
+    receivers:
+      - name: "webhook-receiver"
+        webhook_configs:
+          # Was localhost:8000 in alertmanager.yml, which only ever worked
+          # when both ran on one laptop. In-cluster this is the inference
+          # Service's DNS; port 80 is the Service port, not the container's
+          # 8000.
+          - url: "http://asie.asie-inference.svc.cluster.local/webhook/drift"
+            send_resolved: true
+
+  service:
+    type: ClusterIP
+
+# ---------------------------------------------------------------------------
+# Control-plane scrape targets: off.
+#
+# On EKS the control plane is AWS-managed and these endpoints are not
+# reachable from worker nodes. Left enabled (the chart default) they sit
+# permanently "down" and fire constant TargetDown alerts -- which is worse
+# than no monitoring, because it teaches you to ignore the alert list.
+# ---------------------------------------------------------------------------
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Node/cluster metrics -- keep, they're what makes the HPA and capacity
+# questions answerable, and they're cheap.
+# ---------------------------------------------------------------------------
+nodeExporter:
+  enabled: true
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "300m"
+      memory: "256Mi"

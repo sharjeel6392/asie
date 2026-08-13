@@ -50,6 +50,19 @@ database:
 mlflow:
   trackingUri: "http://asie-mlflow.mlflow.svc.cluster.local:5000"
 
+# Prometheus Operator scrape config. Disabled by default so the chart still
+# installs on a cluster without the ServiceMonitor CRD; asie.sh turns it on
+# once kube-prometheus-stack is present.
+serviceMonitor:
+  enabled: false
+  path: /metrics
+  # 30s, not the 15s prometheus.yml uses locally -- each scrape runs a query
+  # against RDS (get_latest_drift_record), and that cost is multiplied by the
+  # HPA replica count.
+  interval: 30s
+  scrapeTimeout: 10s
+  additionalLabels: {}
+
 initContainer:
   image: "amazon/aws-cli:2"
 
@@ -73,8 +86,11 @@ securityContext: {}
 
 # This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
 service:
-  # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
-  type: LoadBalancer
+  # ClusterIP, not LoadBalancer: eks/ingress.yaml puts this behind the shared
+  # ALB. Leaving it as LoadBalancer would provision a second, separate ELB
+  # alongside the ALB -- exactly the per-service-ELB cost AWS_ARCHITECTURE.md
+  # §6 exists to avoid, and the consolidation would save nothing.
+  type: ClusterIP
   # This sets the ports more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
   port: 80
 

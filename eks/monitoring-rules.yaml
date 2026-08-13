@@ -1,0 +1,100 @@
+# PrometheusRule port of prometheus/alerts.yml, plus rules that only became
+# expressible once Day 6 instrumented the API (src/serving/metrics.py).
+#
+# prometheus/alerts.yml stays in the repo for local dev, where Prometheus is
+# run standalone against localhost:8000 per the README. This CR is the
+# in-cluster equivalent -- the operator discovers it by label, so there is no
+# rule_files path to keep in sync.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: asie-rules
+  namespace: monitoring
+  labels:
+    # Matched by ruleSelectorNilUsesHelmValues: false in monitoring-values.yaml.
+    app: asie
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: drift_alerts
+      rules:
+        # Ported unchanged from prometheus/alerts.yml.
+        - alert: DriftWarning
+          expr: asie_data_drift_score > 0.5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Moderate data drift detected"
+            description: "Drift score has been above 0.5 for more than 5 minutes."
+
+        - alert: DriftCritical
+          expr: asie_data_drift_score > 0.75
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "High data drift spike detected"
+            description: "Drift score exceeded 0.75 for over 1 minute."
+
+        # New. The two rules above can never fire if drift stops being
+        # computed at all: get_latest_drift_record() returns the newest row
+        # regardless of age, so a dead drift worker looks exactly like a
+        # healthy low-drift system. This is the rule that catches that, and
+        # it's the reason asie_drift_last_updated_timestamp_seconds exists.
+        - alert: DriftMetricsStale
+          expr: time() - asie_drift_last_updated_timestamp_seconds > 7200
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No drift metric computed in over 2 hours"
+            description: >-
+              The newest drift_metrics row is more than 2h old. The drift
+              worker or the Airflow DAG that triggers it has likely stopped;
+              DriftWarning/DriftCritical cannot fire while this is true.
+
+    - name: api_alerts
+      rules:
+        # 5xx rate over total. The `> 0` guard on the denominator keeps this
+        # from evaluating to NaN and silently never firing when the service
+        # is idle.
+        - alert: HighErrorRate
+          expr: >-
+            sum(rate(asie_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(asie_http_requests_total[5m])) > 0.05
+            and
+            sum(rate(asie_http_requests_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Over 5% of requests are failing"
+            description: "5xx rate has exceeded 5% of all requests for 5 minutes."
+
+        - alert: HighPredictLatency
+          expr: >-
+            histogram_quantile(
+              0.95,
+              sum(rate(asie_http_request_duration_seconds_bucket{route="/predict"}[5m])) by (le)
+            ) > 2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "p95 /predict latency above 2s"
+            description: >-
+              CPU inference is slower than expected. Check whether the HPA is
+              at max replicas or the node is CPU-saturated.
+
+        # Catches the model failing to load without crashing the pod --
+        # /health reports it, but only kubelet reads /health.
+        - alert: ModelNotLoaded
+          expr: asie_model_loaded{role="primary"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Primary model is not loaded"
+            description: "The pod is serving but its primary model failed to load."

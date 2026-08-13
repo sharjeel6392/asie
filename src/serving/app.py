@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Response, Request
 import uuid
 from datetime import datetime, timezone
 import json
-from prometheus_client import Gauge, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from src.serving.schema import PredictRequest, PredictResponse
 from src.serving.model_loader import ModelLoader
@@ -15,14 +15,18 @@ from src.serving.inference_log_DB.database import init_db
 from src.drift.storage.drift_metrics_repository import init_drift_db as storage_db
 from src.serving.inference_log_DB.repository import log_inference
 from src.drift.worker import run_drift_job
-from src.drift.storage.drift_metrics_repository import get_latest_drift_metric
+from src.drift.storage.drift_metrics_repository import get_latest_drift_record
 from src.events.transformer import transform_alert_to_event
+from src.serving.metrics import (
+    drift_gauge,
+    drift_last_updated,
+    metrics_middleware,
+    model_loaded,
+)
 from src.constants import (
     API_TITLE,
     DEFAULT_DRIFT_WINDOW_HOURS,
     DEFAULT_INFERENCE_DEVICE,
-    DRIFT_METRIC_DESCRIPTION,
-    DRIFT_METRIC_NAME,
     DRIFT_ROUTE,
     DRIFT_WEBHOOK_ROUTE,
     HEALTH_ROUTE,
@@ -31,7 +35,6 @@ from src.constants import (
     PREDICT_ROUTE,
     PRIMARY_MODEL_ROLE,
     PRIMARY_MODEL_VERSION,
-    PROMETHEUS_TEXT_MEDIA_TYPE,
     REQUEST_SOURCE_API,
     SERVED_MODEL_VERSION,
     SHADOW_MODEL_ROLE,
@@ -44,10 +47,9 @@ app = FastAPI(title= API_TITLE)
 loader = ModelLoader(device=DEFAULT_INFERENCE_DEVICE)
 predictor = None
 
-drift_gauge = Gauge(
-    DRIFT_METRIC_NAME,
-    DRIFT_METRIC_DESCRIPTION
-)
+# Counts and times every request except /metrics itself. Collectors live in
+# src/serving/metrics.py so they can be tested without booting the app.
+app.middleware("http")(metrics_middleware)
 
 @app.on_event('startup')
 def startup_event():
@@ -77,6 +79,16 @@ def startup_event():
 
     loader.load()
     predictor = Predictor(loader = loader)
+
+    # Exported as a gauge rather than left to /health alone: /health is only
+    # read by kubelet, so a shadow model silently failing to load is
+    # invisible to anything that alerts.
+    model_loaded.labels(role=PRIMARY_MODEL_ROLE).set(
+        1 if loader.primary_model is not None else 0
+    )
+    model_loaded.labels(role=SHADOW_MODEL_ROLE).set(
+        1 if loader.shadow_model is not None else 0
+    )
 
 @app.get(HEALTH_ROUTE)
 def health():
@@ -196,11 +208,16 @@ def get_drift():
 
 @app.get(METRICS_ROUTE, response_class=Response)
 def metrics():
-    drift_value = get_latest_drift_metric()
-    if drift_value is not None:
+    record = get_latest_drift_record()
+    if record is not None:
+        drift_value, drift_ts = record
         drift_gauge.set(drift_value)
+        # Exporting the row's age lets an alert distinguish "drift is low"
+        # from "nothing has computed drift in hours" -- identical from the
+        # score gauge alone.
+        drift_last_updated.set(drift_ts.timestamp())
 
-    return Response(generate_latest(), media_type=PROMETHEUS_TEXT_MEDIA_TYPE)
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 @app.post(WEBHOOK_ROUTE)
 async def webhook_receiver(request: Request):

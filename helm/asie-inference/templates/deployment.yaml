@@ -41,7 +41,10 @@ spec:
               name: {{ .Values.database.secretName }}
               key: {{ .Values.database.secretKey }}
         ports:
-        - containerPort: 8000
+        # Named so the Service can target it by name (targetPort: http),
+        # which is what lets the ServiceMonitor reference it.
+        - name: http
+          containerPort: 8000
         volumeMounts:
         - name: models
           mountPath: /models

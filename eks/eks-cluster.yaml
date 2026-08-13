@@ -12,6 +12,16 @@ metadata:
 iam:
   withOIDC: true
 
+# The EBS CSI driver is NOT installed by default, and since Kubernetes 1.23
+# the in-tree EBS provisioner is gone -- so without this every PVC stays
+# Pending forever. kube-prometheus-stack (Day 6) wants persistent volumes for
+# Prometheus and Grafana, so this has to exist before that install.
+# wellKnownPolicies makes eksctl create the controller's IRSA role for us.
+addons:
+  - name: aws-ebs-csi-driver
+    wellKnownPolicies:
+      ebsCSIController: true
+
 vpc:
   id: <YOUR_VPC_ID>
 

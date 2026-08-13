@@ -43,17 +43,39 @@ def insert_drift_metric(final_drift_score: float):
         conn.commit()
     logger.debug(f'Wrote drift score: {final_drift_score}')
 
-def get_latest_drift_metric() -> float | None:
+def get_latest_drift_record() -> tuple[float, datetime] | None:
+    """Newest drift row as (score, timestamp), or None if the table is empty.
+
+    The timestamp matters because this query returns the newest row no matter
+    how old it is -- if the drift worker stops, the score alone looks
+    perfectly healthy forever. Callers that export the score should export
+    its age alongside it so staleness is alertable.
+    """
     with get_connection() as conn:
         row = conn.execute(
             text("""
-                SELECT final_drift_score
+                SELECT final_drift_score, timestamp
                 FROM drift_metrics
                 ORDER BY timestamp DESC
                 LIMIT 1
             """)
         ).fetchone()
 
-    if row:
-        return row[0]
-    return None
+    if not row:
+        return None
+
+    score, ts = row[0], row[1]
+
+    # SQLite hands back the ISO string it was given; Postgres TIMESTAMPTZ
+    # comes back as a datetime. Normalise to an aware datetime either way.
+    if isinstance(ts, str):
+        ts = datetime.fromisoformat(ts)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+
+    return score, ts
+
+
+def get_latest_drift_metric() -> float | None:
+    record = get_latest_drift_record()
+    return record[0] if record else None
