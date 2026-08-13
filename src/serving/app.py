@@ -117,12 +117,28 @@ async def predict(req: PredictRequest):
     logger = configure_logger()
     if predictor is None:
         raise HTTPException(status_code=503, detail = 'Model not loaded')
+
+    # PredictRequest.text is Union[str, List[str]], but the comparison loop
+    # below does `enumerate(texts)` — over a bare string that iterates
+    # CHARACTERS, so a 66-char input produced 66 iterations against a
+    # 1-element prediction list and died with IndexError. A single string is
+    # the documented, natural way to call this endpoint, and it returned 500
+    # every time. Normalise once, here, so everything downstream sees a list.
+    texts = [req.text] if isinstance(req.text, str) else list(req.text)
+    # Reject blanks rather than filtering them out: dropping them would return
+    # fewer predictions than inputs, silently misaligning the caller's indices.
+    if not texts or any(not t or not t.strip() for t in texts):
+        raise HTTPException(
+            status_code=422,
+            detail='text must be a non-empty string, or a list of non-empty strings',
+        )
+
     try:
         # ----------------------------------------
         # Primary Inference
         # ----------------------------------------
-        
-        primary_pred = predictor.predict(req.text, PRIMARY_MODEL_ROLE)
+
+        primary_pred = predictor.predict(texts, PRIMARY_MODEL_ROLE)
         primary_predictions = primary_pred['predictions']
         latency_ms = primary_pred['latency_ms']
 
@@ -142,20 +158,20 @@ async def predict(req: PredictRequest):
     if loader.shadow_model is not None:
         shadow_enabled = True
         try:
-            shadow_preds = predictor.predict(req.text, SHADOW_MODEL_ROLE)
+            shadow_preds = predictor.predict(texts, SHADOW_MODEL_ROLE)
             shadow_predictions = shadow_preds['predictions']
             shadow_latency = shadow_preds['latency_ms']
             shadow_per_sample_latency = shadow_latency / len(shadow_predictions)            
         except Exception as e:
             logger.error(f'Shadow failed: {e}')
-            shadow_predictions = [None] * len(req.text)
+            shadow_predictions = [None] * len(texts)
             shadow_per_sample_latency = None
 
     # ----------------------------------------
     # Comparison logic
     # ----------------------------------------
 
-    for i, text in enumerate(req.text):
+    for i, text in enumerate(texts):
         primary = primary_predictions[i]
         embeddings = primary.get("embedding", None)
         shadow = (shadow_predictions[i] if shadow_predictions and i < len(shadow_predictions) else None)
