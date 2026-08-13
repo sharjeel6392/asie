@@ -14,6 +14,12 @@ artifactRoot: "s3://asie-platform-818111885210/mlflow-artifacts/"
 aws:
   region: ap-south-1
 
+# Host headers this server will accept (MLflow 3.x DNS-rebinding guard).
+# Every in-cluster form Airflow / the inference pods may resolve it by, plus
+# localhost for `kubectl port-forward`. Deliberately NOT "*" -- that turns the
+# protection off entirely.
+allowedHosts: "asie-mlflow.mlflow.svc.cluster.local:5000,asie-mlflow.mlflow.svc.cluster.local,asie-mlflow.mlflow:5000,asie-mlflow.mlflow,asie-mlflow:5000,asie-mlflow,localhost:5000,localhost,127.0.0.1:5000,127.0.0.1"
+
 # 1 gunicorn worker. Was 2, which OOMKilled (exit 137) against the 1Gi limit
 # below: MLflow 3.x starts a huey job consumer with 5 threads per worker plus
 # a periodic scheduler, so the per-worker footprint is far larger than 2.x's.

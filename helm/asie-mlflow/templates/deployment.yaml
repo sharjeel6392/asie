@@ -32,6 +32,16 @@ spec:
         - --host=0.0.0.0
         - --port=5000
         - --workers={{ .Values.workers }}
+        # MLflow 3.x validates the Host header to block DNS-rebinding, and its
+        # default allow-list is localhost + private IPs by name only. Clients
+        # reach this server by Kubernetes Service DNS
+        # (asie-mlflow.mlflow.svc.cluster.local), which is not on that list, so
+        # every call from Airflow was rejected with
+        #   403 'Invalid Host header - possible DNS rebinding attack detected'
+        # and the retraining pipeline failed at mlflow.set_experiment().
+        # Scoped to the exact in-cluster names rather than "*", which would
+        # disable the protection entirely.
+        - --allowed-hosts={{ .Values.allowedHosts }}
         env:
         - name: MLFLOW_BACKEND_STORE_URI
           valueFrom:
