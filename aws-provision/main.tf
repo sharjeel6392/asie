@@ -74,6 +74,28 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "platform" {
   }
 }
 
+# A failed multipart upload leaves its uploaded parts behind indefinitely.
+# They're invisible to `aws s3 ls` but still billed as storage, so on a flaky
+# connection -- which is exactly how model/artifact uploads to this bucket
+# fail -- they accumulate silently. Nothing here legitimately takes 7 days to
+# finish an upload.
+resource "aws_s3_bucket_lifecycle_configuration" "platform" {
+  bucket = aws_s3_bucket.platform.id
+
+  rule {
+    id     = "abort-incomplete-multipart-uploads"
+    status = "Enabled"
+
+    # Applies to the whole bucket. An empty filter is how the provider
+    # expresses that for a v2 lifecycle rule.
+    filter {}
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
 # ---------------------------------------------------------------------------
 # ECR — one repo per image asie.sh already builds against.
 # ---------------------------------------------------------------------------
