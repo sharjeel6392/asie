@@ -2,10 +2,19 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ .Release.Name }}
+  # A ServiceMonitor selects Services by label, so metadata labels are a hard
+  # requirement for scraping -- not decoration.
+  labels:
+    app: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   type: {{ .Values.service.type}}
   selector:
     app: {{ .Release.Name}}
   ports:
-  - port: {{ .Values.service.port}}
-    targetPort: 8000
+  # Named because a ServiceMonitor references the port by name, not number.
+  # An unnamed port simply cannot be scraped by the Prometheus Operator.
+  - name: http
+    port: {{ .Values.service.port}}
+    targetPort: http

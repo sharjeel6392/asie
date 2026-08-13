@@ -1,0 +1,82 @@
+# Shared ALB, satisfying AWS_ARCHITECTURE.md §6 ("one ALB for all ingress").
+#
+# Two Ingress objects, not one: an Ingress can only reference Services in its
+# own namespace, and inference and Grafana live in different namespaces. The
+# alb.ingress.kubernetes.io/group.name annotation is what makes the AWS Load
+# Balancer Controller merge them onto a SINGLE ALB instead of provisioning one
+# per Ingress. Both objects must carry the same group.name or the merge
+# silently doesn't happen and you get two billed load balancers.
+#
+# Airflow and MLflow are deliberately NOT here -- see the note at the bottom.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: asie-inference
+  namespace: asie-inference
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/group.name: asie
+    # Lower number = evaluated first. Inference is the catch-all "/" rule, so
+    # it must come AFTER the more specific /grafana rule or it would swallow
+    # every path.
+    alb.ingress.kubernetes.io/group.order: "100"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: asie
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: asie-grafana
+  namespace: monitoring
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    # Same group as above -> same ALB.
+    alb.ingress.kubernetes.io/group.name: asie
+    alb.ingress.kubernetes.io/group.order: "10"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /api/health
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          # Grafana is configured with serve_from_sub_path + a /grafana
+          # root_url in monitoring-values.yaml, so it generates correct asset
+          # URLs under this prefix. Without that config this path serves a
+          # broken UI.
+          - path: /grafana
+            pathType: Prefix
+            backend:
+              service:
+                name: asie-grafana
+                port:
+                  number: 80
+# ---------------------------------------------------------------------------
+# Why Airflow and MLflow aren't routed here yet
+#
+# Both need to know their own public base URL to generate working links
+# (Airflow's webserver.base_url, MLflow's --static-prefix). That URL is the
+# ALB's DNS name, which doesn't exist until this Ingress is applied -- so
+# wiring them requires a two-pass deploy: apply Ingress, read the ALB
+# hostname, then helm upgrade both charts with it.
+#
+# That two-pass flow can't be tested until the images are in ECR and the
+# workloads actually deploy, and shipping an unverifiable fragile deploy step
+# is worse than shipping a documented gap. They stay on `kubectl port-forward`
+# until then. The §6 goal is still met: one ALB, not three ELBs.
+# ---------------------------------------------------------------------------

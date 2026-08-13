@@ -68,7 +68,26 @@ DRIFT_ROUTE = "/drift"
 METRICS_ROUTE = "/metrics"
 WEBHOOK_ROUTE = "/webhook"
 DRIFT_WEBHOOK_ROUTE = "/webhook/drift"
-PROMETHEUS_TEXT_MEDIA_TYPE = "text/plain"
+
+# HTTP metrics (see src/serving/metrics.py)
+HTTP_REQUESTS_METRIC_NAME = "asie_http_requests_total"
+HTTP_REQUESTS_METRIC_DESCRIPTION = "Total HTTP requests by method, route and status"
+HTTP_LATENCY_METRIC_NAME = "asie_http_request_duration_seconds"
+HTTP_LATENCY_METRIC_DESCRIPTION = "HTTP request latency in seconds"
+HTTP_IN_FLIGHT_METRIC_NAME = "asie_http_requests_in_flight"
+HTTP_IN_FLIGHT_METRIC_DESCRIPTION = "HTTP requests currently being served"
+MODEL_LOADED_METRIC_NAME = "asie_model_loaded"
+MODEL_LOADED_METRIC_DESCRIPTION = "1 if the model for this role is loaded, 0 otherwise"
+
+# Latency buckets tuned for CPU transformer inference -- the sub-10ms buckets
+# a default Histogram spends most of its resolution on are wasted here, and
+# the default top bucket of 10s is too coarse to see a p95 regression.
+HTTP_LATENCY_BUCKETS = (0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
+
+# Label used when no route matched (404s). Bucketing them under one constant
+# label instead of the raw path is what stops scanners and typos from
+# creating unbounded time series.
+UNMATCHED_ROUTE_LABEL = "unmatched"
 
 # Inference logging
 INFERENCE_DB_PATH = Path(f"{DATA_DIR}/inference.db")
@@ -84,6 +103,13 @@ DRIFT_DB_PATH = "drift.db"
 DRIFT_SCHEMA_PATH = Path("src/drift/storage/schema.sql")
 DRIFT_METRIC_NAME = "asie_data_drift_score"
 DRIFT_METRIC_DESCRIPTION = "Aggregated drift score (feature + prediction drift)"
+DRIFT_UPDATED_METRIC_NAME = "asie_drift_last_updated_timestamp_seconds"
+DRIFT_UPDATED_METRIC_DESCRIPTION = (
+    "Unix timestamp of the most recent drift metric row. "
+    "get_latest_drift_metric() returns the newest row regardless of age, so "
+    "the score gauge alone can report a stale value forever if the drift "
+    "worker stops. This is what a staleness alert watches."
+)
 DRIFT_THRESHOLD = 0.5  # matches Prometheus DriftWarning (prometheus/alerts.yml)
 DEFAULT_DRIFT_WINDOW_HOURS = 24
 DEFAULT_CLI_DRIFT_WINDOW_HOURS = 1

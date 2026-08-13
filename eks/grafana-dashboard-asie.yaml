@@ -1,0 +1,177 @@
+# Grafana dashboard delivered as a ConfigMap rather than clicked together in
+# the UI: the sidecar (grafana.sidecar.dashboards in monitoring-values.yaml)
+# imports anything labelled grafana_dashboard=1, so the dashboard is
+# version-controlled and survives `asie.sh down`/`up`, which a dashboard
+# living only in Grafana's database would not.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-asie
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  asie-overview.json: |
+    {
+      "title": "ASIE — Inference & Drift",
+      "uid": "asie-overview",
+      "timezone": "browser",
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Request rate by route",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum by (route) (rate(asie_http_requests_total[5m]))",
+              "legendFormat": "{{route}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "reqps" },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Latency p50 / p95 / p99 (/predict)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(asie_http_request_duration_seconds_bucket{route=\"/predict\"}[5m])) by (le))",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(asie_http_request_duration_seconds_bucket{route=\"/predict\"}[5m])) by (le))",
+              "legendFormat": "p95"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(asie_http_request_duration_seconds_bucket{route=\"/predict\"}[5m])) by (le))",
+              "legendFormat": "p99"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "s" },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Error rate (5xx share of all requests)",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(asie_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(asie_http_requests_total[5m])), 0.001)",
+              "legendFormat": "5xx ratio"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "max": 1,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 0.05 }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Drift score (warning 0.5 / critical 0.75)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "asie_data_drift_score",
+              "legendFormat": "drift score"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "max": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 0.5 },
+                  { "color": "red", "value": 0.75 }
+                ]
+              },
+              "custom": { "thresholdsStyle": { "mode": "line" } }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Drift metric age",
+          "description": "Time since the newest drift_metrics row. A flat rising line means the drift worker has stopped — the drift score panel would still look healthy.",
+          "gridPos": { "h": 6, "w": 8, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "time() - asie_drift_last_updated_timestamp_seconds",
+              "legendFormat": "age"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 7200 }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Models loaded",
+          "gridPos": { "h": 6, "w": 8, "x": 8, "y": 16 },
+          "targets": [
+            {
+              "expr": "asie_model_loaded",
+              "legendFormat": "{{role}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "green", "value": 1 }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "In-flight requests vs replicas",
+          "gridPos": { "h": 6, "w": 8, "x": 16, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(asie_http_requests_in_flight)",
+              "legendFormat": "in flight"
+            },
+            {
+              "expr": "kube_deployment_status_replicas_available{deployment=\"asie\"}",
+              "legendFormat": "replicas"
+            }
+          ]
+        }
+      ]
+    }
