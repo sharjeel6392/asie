@@ -156,12 +156,16 @@ Landed and verified:
 - ✅ **Charts authored and validated** (`helm template` renders clean): `helm/asie-mlflow/` written from scratch, `eks/airflow-values.yaml` for the official chart at `LocalExecutor`.
 - ✅ **`asie.sh` rewritten** — fixed the live namespace bug (`asie-inference-namespace` vs. the real `asie-inference`) and the undefined `$RELEASE_NAME`, and extended to a 13-step flow covering all three workloads.
 
-Not yet done — blocked on a sustained AWS connectivity outage:
+Not yet done — blocked on the environment, not the code:
 
-- ⏸ Push all three images to ECR (Airflow and inference images are built locally; the MLflow image failed pulling its `ghcr.io` base layer)
-- ⏸ `helm install` MLflow, Airflow, and the updated inference chart, and verify the end-to-end path: initContainer S3 sync → `POST /predict` → a row in RDS `inference_logs`
-- ⏸ `dvc push` — the remote is configured, but the local `dvc` reports "everything is up to date" with no network activity even after installing the missing `dvc-s3` driver. Can't distinguish a real bug from the outage until connectivity returns.
+- ⏸ Push all three images to ECR. All three are built locally (inference 2.05 GB, MLflow 1.7 GB, Airflow 4.84 GB) and all three ECR repos are still empty.
+- ⏸ `helm install` MLflow, Airflow, and the updated inference chart, and verify the end-to-end path: initContainer S3 sync → `POST /predict` → a row in RDS `inference_logs`. All downstream of the images landing.
 - ⏸ A full `./asie.sh down && up` cycle — the real acceptance test, given how much of this work exists to make that script trustworthy again.
+- ⏸ `terraform apply` for the S3 lifecycle rule (validated, not applied).
+
+**The blocker, diagnosed:** this host cannot sustain a large upload. 12 push attempts failed across all three images — including the smallest — and the decisive test was non-Docker: a plain `aws s3 cp` of a 200 MB file died at part 10 of its multipart upload. Small requests are unaffected throughout (`kubectl`, `aws s3 ls`, a 164 KB `dvc push`, `docker pull hello-world` all fine). The error is `WSAECONNABORTED` — "an established connection was aborted by the software in your host machine" — which Windows emits for a *local* abort, so the usual suspects are a VPN client, endpoint-security TLS inspection, or the router, not AWS. `max-concurrent-uploads: 1` and a Docker restart were tried and did not help, consistent with the problem sitting below Docker.
+
+**When picked back up**, the options are (a) resolve the host-side network issue and re-push, or (b) build inside AWS — a Kaniko Job on the existing cluster, or CodeBuild — so only the ~9 MB git push leaves the machine and the 8.6 GB of layer traffic stays inside AWS. (b) is the more robust answer and doesn't depend on diagnosing the local network.
 
 Bugs found and fixed along the way (details in Daily Updates): a `.dockerignore` pattern that was silently stripping `src/pipelines/` from every build; `check_drift` returning `None` on its success path, which made the retraining DAG skip retraining even when drift *was* detected; a bootstrap script that regenerated DB passwords on every run, desyncing them from the roles it had already created.
 
