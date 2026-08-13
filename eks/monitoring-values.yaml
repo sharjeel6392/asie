@@ -74,6 +74,14 @@ grafana:
       root_url: "%(protocol)s://%(domain)s/grafana/"
       serve_from_sub_path: true
 
+  # serve_from_sub_path moves EVERY route under /grafana, including Grafana's
+  # own /metrics -- which the chart's ServiceMonitor still scraped at /metrics,
+  # got a 301, and reported the target as down. That produced a permanently
+  # firing TargetDown: precisely the "alerts you learn to ignore" failure this
+  # file disables the control-plane scrape jobs to avoid.
+  serviceMonitor:
+    path: /grafana/metrics
+
   persistence:
     enabled: true
     storageClassName: gp3
@@ -114,13 +122,37 @@ alertmanager:
         cpu: "200m"
         memory: "256Mi"
 
+  # NOTE ON THE "null" RECEIVER BELOW -- it is load-bearing, not leftover.
+  #
+  # Helm merges `route` as a map but replaces `receivers` as a list. The
+  # chart's default route carries a child `routes:` entry pointing at a
+  # receiver named "null" (used to swallow the always-firing Watchdog and
+  # InfoInhibitor heartbeats). Overriding `receivers` without redefining
+  # "null" deletes it while that child route survives the merge, so the
+  # generated config references an undefined receiver. The operator then
+  # refuses to build the Alertmanager config secret entirely:
+  #   "provision alertmanager configuration: ... undefined receiver \"null\"
+  #    used in route"
+  # -- no StatefulSet, no pod, and every alert silently goes nowhere.
+  #
+  # `helm template` does NOT catch this: the chart renders valid YAML and the
+  # rejection happens in the operator at runtime.
   config:
     route:
+      group_by: ["namespace", "alertname"]
       receiver: "webhook-receiver"
       group_wait: 30s
       group_interval: 5m
       repeat_interval: 3h
+      routes:
+        # Watchdog fires permanently by design (it proves the alert pipeline
+        # is alive); InfoInhibitor is informational. Neither should reach the
+        # drift webhook.
+        - receiver: "null"
+          matchers:
+            - alertname =~ "InfoInhibitor|Watchdog"
     receivers:
+      - name: "null"
       - name: "webhook-receiver"
         webhook_configs:
           # Was localhost:8000 in alertmanager.yml, which only ever worked

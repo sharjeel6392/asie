@@ -42,8 +42,16 @@ spec:
         # regardless of age, so a dead drift worker looks exactly like a
         # healthy low-drift system. This is the rule that catches that, and
         # it's the reason asie_drift_last_updated_timestamp_seconds exists.
+        # The `> 0` guard is required, not defensive. A Gauge that has never
+        # been .set() still exports as 0, so on a fresh deployment with an
+        # empty drift_metrics table this evaluates to time() - 0 -- about 1.8
+        # billion seconds -- and the alert fires immediately, before drift has
+        # ever legitimately been computed. Confirmed firing on first deploy.
         - alert: DriftMetricsStale
-          expr: time() - asie_drift_last_updated_timestamp_seconds > 7200
+          expr: >-
+            asie_drift_last_updated_timestamp_seconds > 0
+            and
+            time() - asie_drift_last_updated_timestamp_seconds > 7200
           for: 15m
           labels:
             severity: warning
