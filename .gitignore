@@ -25,10 +25,18 @@ mlflow.db
 temp_airflow_run.txt
 
 # Data and model artifacts
-data/
-model/
-exported_model/
-!*.dvc
+# These use `dir/**` + `!dir/**/` rather than a bare `dir/`. Git never
+# descends into an ignored *directory*, so under `data/` the negations
+# below could never match -- which hid data/*.dvc from DVC's collector
+# (it honors gitignore), leaving `dvc status` reporting "no data tracked"
+# and `dvc push` exiting 0 having pushed nothing.
+data/**
+model/**
+exported_model/**
+!data/**/
+!model/**/
+!exported_model/**/
+!**/*.dvc
 !data/data_manifest.yaml
 !model/model_registry.yaml
 
