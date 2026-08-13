@@ -35,4 +35,14 @@ COPY --chown=airflow:root pyproject.toml .
 # even though .venv/ is in the dockerignore.
 COPY --chown=airflow:root .dvc/config ./.dvc/config
 COPY --chown=airflow:root data/financial_phrasebank.parquet.dvc ./data/
+
+# DVC refuses to run outside an SCM repo ("/opt/airflow/asie is not a git
+# repository", exit 255) and .git is deliberately not in the image. no_scm
+# tells DVC to operate on the working tree alone, which is all `dvc pull`
+# needs given the pointer file is present.
+#
+# Written to config.local rather than config: config.local is gitignored and
+# image-only, so the checked-in .dvc/config keeps working normally on a dev
+# machine, where the repo genuinely is under git.
+RUN printf '[core]\n    no_scm = true\n' > ./.dvc/config.local
 COPY --chown=airflow:root airflow-home/dags/ /opt/airflow/dags/
