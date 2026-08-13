@@ -17,54 +17,34 @@ def configure_logger():
     )
 
     if airflow_context:
-        logger = logging.getLogger("airflow.task")
+        # Return a CHILD of airflow.task, not airflow.task itself.
+        #
+        # Records propagate up to airflow.task's FileTaskHandler (so they land
+        # in the task log), and Airflow sets airflow.task.propagate = False by
+        # default, so they stop there and never reach the root logger.
+        #
+        # That last part is the whole point. Airflow replaces sys.stdout and
+        # sys.stderr with StreamLogWriter, which *logs* whatever is written to
+        # it. Libraries that call logging.basicConfig() -- mlflow and datasets
+        # both do -- attach a StreamHandler to the ROOT logger bound to that
+        # replaced stderr. A record reaching root then gets written to
+        # StreamLogWriter, which logs it, which reaches root again:
+        #   _propagate_log -> write -> flush -> handle -> emit -> _propagate_log
+        # until the stack is exhausted. That surfaces as an opaque
+        # "RecursionError: maximum recursion depth exceeded" from inside
+        # logger.error(), with no hint of the real cause.
+        logger = logging.getLogger("airflow.task.asie")
         logger.setLevel(logging.DEBUG)
-        # Do not propagate to avoid re-entering Airflow's logging handlers
-        # which can cause recursive log writes under some configurations.
-        logger.propagate = False
 
-        # Diagnostic dump: write current logging handlers and streams to a temp file
-        try:
-            dump_path = "/tmp/airflow_logger_dump.txt"
-            with open(dump_path, "w", encoding="utf-8") as f:
-                import sys as _sys
-                f.write(f"sys.stderr: {type(_sys.stderr)} {repr(_sys.stderr)} id={id(_sys.stderr)}\n")
-                f.write(f"sys.stdout: {type(_sys.stdout)} {repr(_sys.stdout)} id={id(_sys.stdout)}\n")
-                root = logging.getLogger()
-                f.write("\nRoot handlers:\n")
-                for h in root.handlers:
-                    try:
-                        s = getattr(h, "stream", None)
-                        f.write(f"  {type(h).__name__} stream={type(s).__name__} id={id(s)} repr={repr(s)} has_set_context={hasattr(h,'set_context')}\n")
-                    except Exception as _e:
-                        f.write(f"  {type(h).__name__} stream_lookup_error={_e}\n")
+        # Belt and braces: if a library already attached such a handler to
+        # root before we got here, drop it. It is only ever a self-feeding
+        # loop under Airflow.
+        root = logging.getLogger()
+        for handler in list(root.handlers):
+            stream = getattr(handler, "stream", None)
+            if stream is not None and type(stream).__name__ == "StreamLogWriter":
+                root.removeHandler(handler)
 
-                f.write("\nAll loggers:\n")
-                for name in sorted(logging.root.manager.loggerDict):
-                    logger_obj = logging.getLogger(name)
-                    f.write(f"LOGGER {name} level={logger_obj.level} propagate={logger_obj.propagate} handlers={[type(h).__name__ for h in logger_obj.handlers]}\n")
-                    for h in logger_obj.handlers:
-                        try:
-                            s = getattr(h, "stream", None)
-                            f.write(f"   handler {type(h).__name__} stream_type={type(s).__name__ if s else None} id={id(s)} repr={repr(s)} has_set_context={hasattr(h,'set_context')}\n")
-                        except Exception as _e:
-                            f.write(f"   handler {type(h).__name__} stream_lookup_error={_e}\n")
-
-                last = getattr(logging, "lastResort", None)
-                f.write(f"\nlogging.lastResort: {type(last).__name__ if last else None} stream={getattr(last, 'stream', None)}\n")
-        except Exception:
-            # Don't let diagnostics break logging configuration
-            pass
-        # Defensive: ensure logging.lastResort writes to the original stderr, not a wrapped one
-        try:
-            import logging as _logging, sys as _sys
-            if hasattr(_logging, 'lastResort') and getattr(_logging, 'lastResort', None) is not None:
-                try:
-                    _logging.lastResort.stream = getattr(_sys, '__stderr__', _sys.stderr)
-                except Exception:
-                    pass
-        except Exception:
-            pass
         return logger
 
     logger = logging.getLogger("asie")
