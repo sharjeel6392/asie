@@ -1,0 +1,6 @@
+apiVersion: v2
+name: asie-mlflow
+description: MLflow tracking server backed by RDS mlflow_db + S3 artifacts
+type: application
+version: 0.1.0
+appVersion: "3.9.0"

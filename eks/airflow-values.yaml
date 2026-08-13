@@ -12,6 +12,10 @@ postgresql:
 redis:
   enabled: false
 
+# NOTE: tag is overridden at install time with --set images.airflow.tag=$(git
+# rev-parse --short HEAD) (see asie.sh) — a mutable "latest" tag means
+# `helm upgrade` won't roll pods when the underlying image changes, since
+# the pod spec (image: repo:latest) looks unchanged to Kubernetes.
 images:
   airflow:
     repository: 818111885210.dkr.ecr.ap-south-1.amazonaws.com/asie-airflow-repo

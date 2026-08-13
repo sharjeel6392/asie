@@ -15,6 +15,13 @@ kubectl -n asie-inference create secret generic asie-app-db \
   --from-literal=ASIE_DATABASE_URL="postgresql+psycopg2://asie_app_user:${ASIE_APP_USER_PASSWORD}@${RDS_HOST}:${RDS_PORT}/asie_app" \
   --dry-run=client -o yaml | kubectl apply -f -
 
+# The DAG reads asie_app (drift metrics) in addition to Airflow's own
+# metadata DB — same connection string, second namespace, since Secrets
+# don't cross namespaces.
+kubectl -n airflow create secret generic asie-app-db \
+  --from-literal=ASIE_DATABASE_URL="postgresql+psycopg2://asie_app_user:${ASIE_APP_USER_PASSWORD}@${RDS_HOST}:${RDS_PORT}/asie_app" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 # The official Airflow chart requires exactly this key name ("connection")
 # for data.metadataSecretName.
 kubectl -n airflow create secret generic airflow-metadata-db \

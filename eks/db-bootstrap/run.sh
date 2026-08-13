@@ -17,14 +17,23 @@ RDS_MASTER_PASSWORD=$(terraform output -raw rds_master_password)
 RDS_DB_NAME=$(terraform output -raw rds_db_name)
 cd "$REPO_ROOT"
 
-# Passwords for the 3 workload roles this run creates (or re-creates the
-# secret for — the roles themselves are idempotently skipped if they
-# already exist per 00_create_databases.sql, but re-running this script
-# does rotate the password stored in these secrets each time; that's fine
-# since nothing else has a stale copy to invalidate).
-ASIE_APP_USER_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')
-AIRFLOW_USER_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')
-MLFLOW_USER_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')
+# Passwords for the 3 workload roles. 00_create_databases.sql only creates
+# a role if it doesn't already exist, so on a re-run the DB keeps whatever
+# password the role was created with — generating fresh ones here every
+# time would desync the Secret from the DB and break every workload's auth
+# on the next pod restart. Reuse the existing secret's values if present,
+# only generating fresh passwords the first time (or after a full
+# asie.sh down, when the secret and the DB are both gone together).
+_existing_password() {
+  kubectl -n "$NAMESPACE" get secret asie-rds-bootstrap \
+    -o jsonpath="{.data.$1}" 2>/dev/null | base64 -d 2>/dev/null
+}
+ASIE_APP_USER_PASSWORD=$(_existing_password ASIE_APP_USER_PASSWORD)
+AIRFLOW_USER_PASSWORD=$(_existing_password AIRFLOW_USER_PASSWORD)
+MLFLOW_USER_PASSWORD=$(_existing_password MLFLOW_USER_PASSWORD)
+[ -n "$ASIE_APP_USER_PASSWORD" ] || ASIE_APP_USER_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')
+[ -n "$AIRFLOW_USER_PASSWORD" ] || AIRFLOW_USER_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')
+[ -n "$MLFLOW_USER_PASSWORD" ] || MLFLOW_USER_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')
 
 echo "Creating asie-rds-bootstrap secret (ns $NAMESPACE)..."
 kubectl -n "$NAMESPACE" create secret generic asie-rds-bootstrap \

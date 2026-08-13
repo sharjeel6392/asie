@@ -1,7 +1,7 @@
 # ASIE — AWS Target Architecture
 
 **Week 11 · Day 1 of 7 — AWS Architecture Planning**
-Region: `ap-south-1` · Status: Active · 2026-08-10 · Last updated 2026-08-11 (Day 2 provisioned)
+Region: `ap-south-1` · Status: Active · 2026-08-10 · Last updated 2026-08-13 (Days 4+5 in progress)
 
 Moving ASIE off a single-host Docker Compose setup onto a fully AWS-hosted platform — inference serving, orchestration, and monitoring all running in-cluster, nothing left on a laptop.
 
@@ -75,8 +75,8 @@ flowchart TB
     end
 
     subgraph Regional["AWS Regional Services · ap-south-1"]
-        S3["Amazon S3<br/>dvc-data/ · mlflow-artifacts/<br/>models/ (Day 5)"]
-        ECR["Amazon ECR<br/>asie-inference-repo · asie-airflow-repo"]
+        S3["Amazon S3<br/>dvc-data/ · mlflow-artifacts/<br/>models/"]
+        ECR["Amazon ECR<br/>asie-inference-repo · asie-airflow-repo<br/>asie-mlflow-repo"]
         Secrets["Secrets Manager<br/>DB creds · tracking URIs"]
     end
 
@@ -110,12 +110,12 @@ What each piece of the local stack becomes, and why it has to change rather than
 | FastAPI — `dockerfile` | Helm chart `asie-inference`, image from ECR | Already built (Weeks 3–4); it just needs a real registry behind it. |
 | `inference.db` (SQLite) | RDS · `asie_app_db.inference_logs` | SQLite breaks the moment HPA runs more than one replica — each pod gets its own file. |
 | `drift.db` (SQLite) | RDS · `asie_app_db.drift_metrics` | Same failure mode as above. |
-| `model_registry.yaml` (file) | MLflow Model Registry (RDS-backed) | A hand-edited file with concurrent pod writers is a corruption waiting to happen. |
-| `exported_model/` (961 MB, baked into image) | S3 bucket, fetched at pod startup | Keeps the image thin. Scoped to Day 5, noted here for completeness. |
+| `model_registry.yaml` (file) | Same YAML, stored in S3 (`models/model_registry.yaml`) | *Day 4/5 revision:* stayed a YAML document rather than moving to the MLflow Model Registry. Only the retraining DAG writes it — a single writer, so the corruption risk that motivated the swap doesn't exist, and porting `model_registry.py`'s promote/rollback logic onto MLflow's registry API is a rewrite Day 4 didn't need. `load_registry`/`save_registry` read and write through S3 when `ASIE_MODEL_S3_URI` is set, local disk otherwise. |
+| `exported_model/` (961 MB, baked into image) | S3 bucket, fetched at pod startup | Keeps the image thin. Delivered by an `amazon/aws-cli` initContainer syncing `models/` into an `emptyDir` the app container mounts. |
 | `data/*.parquet` + DVC (no remote) | S3 bucket as DVC remote | `dvc pull` is currently impossible on a fresh clone or CI runner. |
 | `prometheus.yml` / `alerts.yml` / `alertmanager.yml` | kube-prometheus-stack on EKS | `alerts.yml` ports to a PrometheusRule CR almost unchanged. |
 | `.env` secrets | Secrets Manager → K8s Secret at deploy | No secret should live in a file that could get committed. |
-| `asie-inference:latest` (local image) | ECR: `asie-inference-repo`, `asie-airflow-repo` | A private registry, not a locally-tagged image nothing else can pull. Named `-repo` to match the `ECR_REPO` variable `asie.sh` already uses. |
+| `asie-inference:latest` (local image) | ECR: `asie-inference-repo`, `asie-airflow-repo`, `asie-mlflow-repo` | A private registry, not a locally-tagged image nothing else can pull. Named `-repo` to match the `ECR_REPO` variable `asie.sh` already uses. The third repo was added Day 4: `ghcr.io/mlflow/mlflow` ships without `psycopg2`/`boto3`, so an RDS+S3-backed server needs a custom image rather than the upstream one. |
 
 ---
 
@@ -141,19 +141,29 @@ Day 1 is this document. Days 2–7 follow the Task Board, with the concrete scop
 - ✅ AWS Load Balancer Controller installed via Helm (`eks/aws-load-balancer-controller-values.yaml`), IRSA service account in `kube-system`, IAM policy pinned at `eks/iam-policies/aws-load-balancer-controller-policy.json`. 2/2 pods `Running`, no permission errors.
 - ✅ RDS security group tightened to the EKS cluster SG (see §7).
 
-### Day 4 — Deploy Existing Services
+### Days 4 + 5 — Deploy Services & Migrate Storage 🚧 In progress (2026-08-12/13)
 
-- `helm install asie-inference` — image and paths now correct after the Day 1 cleanup commit
-- `helm install` the official Airflow chart, pointed at RDS `airflow_db`
-- Deploy MLflow server, pointed at RDS `mlflow_db` + S3 `mlflow-artifacts/`
-- Verify pod-to-pod and pod-to-RDS connectivity end to end
+**Run as one sequence, not two days.** Day 4's deploys can't be verified without Day 5's storage work landing first: the inference pod has nowhere durable to log until RDS has schema, MLflow won't boot until `mlflow_db` exists, and a 961 MB model baked into the image makes every deploy iteration painful. The dependency runs storage → services, so the days were merged rather than done in the order originally written here.
 
-### Day 5 — Migrate Storage and Configuration
+Landed and verified:
 
-- Port both SQLite `schema.sql` files to Postgres-compatible DDL
-- `dvc remote add` against the new S3 bucket
-- Move `exported_model/` to S3; fetch at pod startup instead of baking into the image
-- Slim the inference image: CPU-only torch wheel, drop mlflow/dvc/datasets/pytest from it
+- ✅ **Image slimming.** `requirements_inference.txt` split into `requirements_serving.txt` (slim) and `requirements_airflow.txt` (full) — it was shared by both Dockerfiles, so slimming in place would have silently broken the Airflow image, which genuinely needs mlflow/dvc/datasets. CPU-only torch installed from `download.pytorch.org/whl/cpu`. Inference image: **2.05 GB, down from ~7-8 GB**.
+- ✅ **Third ECR repo** (`asie-mlflow-repo`) provisioned via Terraform, mirroring the existing two.
+- ✅ **Three least-privilege IAM policies + IRSA service accounts**, one per workload — closes the §7 open item. Each policy carries both an object-level statement *and* a `ListBucket` statement scoped by `Condition: StringLike: s3:prefix`; without the second, `aws s3 sync` fails with AccessDenied even when `GetObject` is allowed, since `ListBucket` is a bucket-level action that object ARNs can't restrict.
+- ✅ **`exported_model/` → S3**, fetched at pod startup by an `amazon/aws-cli` initContainer. `export_model.py` and `model_registry.py` also became S3-aware so *retrained* models persist — otherwise every retrain would be lost on pod restart and deploying Airflow would accomplish nothing durable.
+- ✅ **RDS bootstrapped** — `airflow_db`, `mlflow_db`, and three least-privilege roles created; both SQLite schemas ported to Postgres (`TEXT` timestamps → `TIMESTAMPTZ`, `AUTOINCREMENT` → `GENERATED ALWAYS AS IDENTITY`). Done via a one-shot in-cluster Job, not a bastion or tunnel — RDS is private-subnet-only and there's no network path from a dev machine, and a committed idempotent Job is the only approach that survives `asie.sh down`/`up`.
+- ✅ **App code ported to SQLAlchemy** (`src/db/engine.py`) — one code path serves both local SQLite and cluster Postgres via `text()` with named binds, no dialect branching. Verified end-to-end locally.
+- ✅ **Charts authored and validated** (`helm template` renders clean): `helm/asie-mlflow/` written from scratch, `eks/airflow-values.yaml` for the official chart at `LocalExecutor`.
+- ✅ **`asie.sh` rewritten** — fixed the live namespace bug (`asie-inference-namespace` vs. the real `asie-inference`) and the undefined `$RELEASE_NAME`, and extended to a 13-step flow covering all three workloads.
+
+Not yet done — blocked on a sustained AWS connectivity outage:
+
+- ⏸ Push all three images to ECR (Airflow and inference images are built locally; the MLflow image failed pulling its `ghcr.io` base layer)
+- ⏸ `helm install` MLflow, Airflow, and the updated inference chart, and verify the end-to-end path: initContainer S3 sync → `POST /predict` → a row in RDS `inference_logs`
+- ⏸ `dvc push` — the remote is configured, but the local `dvc` reports "everything is up to date" with no network activity even after installing the missing `dvc-s3` driver. Can't distinguish a real bug from the outage until connectivity returns.
+- ⏸ A full `./asie.sh down && up` cycle — the real acceptance test, given how much of this work exists to make that script trustworthy again.
+
+Bugs found and fixed along the way (details in Daily Updates): a `.dockerignore` pattern that was silently stripping `src/pipelines/` from every build; `check_drift` returning `None` on its success path, which made the retraining DAG skip retraining even when drift *was* detected; a bootstrap script that regenerated DB passwords on every run, desyncing them from the roles it had already created.
 
 ### Day 6 — Cloud Monitoring & Observability
 
@@ -196,9 +206,11 @@ Flagged now, decided later — none of these block starting Day 2.
 
 - ~~**Tighten the RDS security group.**~~ Resolved Day 3 — ingress now references the EKS cluster security group (`sg-0a4fc01ec840df1ed`) directly instead of the private subnet CIDRs. Note: the SG's `description` field is immutable in the AWS provider (changing it forces a full destroy/recreate) and AWS refuses to delete a SG still attached to the RDS instance's ENI — so the description was left as-is and only the `ingress` block's `cidr_blocks` → `security_groups` swap was applied in place, via a new `data "aws_eks_cluster"` lookup in `modules/rds/main.tf`.
 - ~~**Node capacity.**~~ Resolved Day 3 — `t3.xlarge × 2`, see §5.
-- **IRSA role granularity — decided Day 3.** One IAM role per workload (inference / airflow / mlflow), created via `eksctl create iamserviceaccount --namespace <ns> --name <workload>-irsa-sa` per namespace — the same tool and pattern used for the AWS Load Balancer Controller's own service account, rather than Terraform-managed IAM roles, so IAM-role-to-K8s-SA creation stays in one tool. Not implemented yet: the actual policy JSON per workload waits for Day 4, once each workload's concrete S3 prefix and RDS access pattern is known — writing scoped policies before that is just rework waiting to happen.
-- **Secrets delivery.** Starting with plain K8s Secrets populated at deploy time, matching `asie.sh`'s existing style. External Secrets Operator (auto-sync, rotation) is a reasonable later upgrade, not a Day 1 blocker.
-- **Airflow DAG delivery.** Git-sync sidecar vs. baking DAGs into the image — decided when the Helm release goes up on Day 4.
+- ~~**IRSA role granularity.**~~ Resolved Day 4 — one role per workload as planned, policies pinned at `eks/iam-policies/asie-{inference,airflow,mlflow}-policy.json`. Scopes landed narrower than "each workload gets the bucket": inference gets read-only on `models/*` and nothing else; mlflow gets read/write on `mlflow-artifacts/*` and nothing else; airflow, the only workload that actually writes across prefixes, gets `models/*` + `mlflow-artifacts/*` read/write and `dvc-data/*` read/write. Notably `dvc-data/*` is **not** in inference's policy — tracing the serving import graph confirmed nothing on the request path reads DVC data (drift reference windows come from `inference_logs`, not files). No ECR actions in any of them: the kubelet pulls images using the *node* role, not the pod's IRSA role, so granting ECR here would be pure noise.
+- **Secrets delivery.** Starting with plain K8s Secrets populated at deploy time, matching `asie.sh`'s existing style. External Secrets Operator (auto-sync, rotation) is a reasonable later upgrade, not a Day 1 blocker. *(Day 4 note: the §3 diagram still shows Secrets Manager as the source; in practice nothing reads it yet — DB credentials flow `terraform output` → K8s Secret. The diagram describes the intended end state, not what's wired today.)*
+- ~~**Airflow DAG delivery.**~~ Resolved Day 4 — DAGs are **baked into the image**, not git-synced. Git-sync would need in-cluster git credentials for no real gain, since `src/` has to be in the image regardless (the DAG imports the retraining pipeline directly), so a sidecar would leave DAG code and the library it calls on two different update paths. `dags.gitSync.enabled: false`, `dags.persistence.enabled: false`.
+- **Ingress consolidation — deferred to Day 6.** §6 calls for one ALB routing to everything, but Day 4 left the Airflow and MLflow UIs on `ClusterIP` (reached via `kubectl port-forward`) with only inference on a `LoadBalancer`. Promoting each to its own LoadBalancer Service would mean three billed ELBs, i.e. exactly what §6 says not to do. Day 6 adds Grafana, which is the third UI needing exposure — that's the natural point to do the Ingress work once for all of them rather than twice.
+- **MLflow artifact proxying is deliberately off.** The server runs with `--no-serve-artifacts`. Since MLflow 2.0 the default is to proxy artifact traffic through the tracking server, which would funnel every model upload through a single pod and make the IAM design wrong — the policies grant *airflow* write access to `mlflow-artifacts/*` on the assumption clients talk to S3 directly.
 
 ---
 
