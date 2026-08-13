@@ -12,6 +12,7 @@ Moving ASIE off a single-host Docker Compose setup onto a fully AWS-hosted platf
 - [§3 Target Architecture](#3-target-architecture)
 - [§4 Service Mapping](#4-service-mapping)
 - [§5 Migration Plan](#5-migration-plan)
+- [§5b Lifecycle](#5b-lifecycle--asiesh-is-the-only-entry-and-exit-point)
 - [§6 Networking Decisions](#6-networking-decisions)
 - [§7 Open Items](#7-open-items)
 
@@ -194,6 +195,27 @@ Airflow and MLflow are deliberately still on `kubectl port-forward`. Both need t
 
 - Full inference → drift → alert loop, exercised in-cluster
 - Architecture screenshots, README/PDR updates, close out the Task Board
+
+---
+
+## §5b Lifecycle — `asie.sh` is the only entry and exit point
+
+Four commands, composed from the same phase functions so they can't drift apart (a `resume` that runs a different sequence than `up` fails only in production).
+
+| Command | Does | Keeps |
+|---|---|---|
+| `up` | Provision, build, push, deploy everything. Idempotent. | — |
+| `pause` | Delete workloads + cluster. | S3, ECR, RDS, VPC — **no data lost** |
+| `resume` | Rebuild cluster and redeploy on surviving data. Skips Terraform and the image build, since neither was torn down. | — |
+| `down` | Destroy everything, including all data. **Irreversible.** | nothing |
+
+Three problems this replaced, all found by tracing what `down` actually did rather than what it printed:
+
+- **`down` could not complete.** The S3 bucket had no `force_destroy` and the ECR repos no `force_delete`, so `terraform destroy` hit `BucketNotEmpty` — but only *after* destroying RDS and the VPC, since neither depends on the bucket. The result was a half-destroyed stack, which is worse than either finishing or refusing. Both force flags are now set, and `down` is gated behind a typed `destroy asie` confirmation that lists what will be lost. It also refuses outright on a non-TTY, so a stray CI invocation can't wipe the account.
+- **Cost control required the nuclear option.** There was no way to stop paying for compute without also destroying the S3 models — which, on a connection that can't sustain a large upload, is unrecoverable. `pause`/`resume` exist for exactly that, and cost roughly $10.60/day of the ~$12 total.
+- **`pause` would have broken authentication.** `00_create_databases.sql` created each role *with* its password and skipped roles that already existed. But the roles live in RDS and the passwords live in a Kubernetes Secret — different lifetimes. A pause deletes the Secret while RDS survives, so the next run generates fresh passwords, finds the roles present, skips `CREATE`, and never applies them. Every workload then fails to authenticate with nothing in the logs explaining why. Each role is now `CREATE`d if absent and `ALTER`ed unconditionally, so the password re-syncs on every run.
+
+`down` also cleans up the IAM policies and the EBS CSI role created outside Terraform (via `aws iam create-policy` and `eksctl --role-only`); previously those survived teardown and collided with the next `up`.
 
 ---
 

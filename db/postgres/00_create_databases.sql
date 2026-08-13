@@ -10,14 +10,27 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'airflow_db')\gexec
 SELECT 'CREATE DATABASE mlflow_db'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'mlflow_db')\gexec
 
-SELECT 'CREATE ROLE asie_app_user LOGIN PASSWORD ''' || :'asie_app_user_password' || ''''
+-- Create-if-absent, then ALWAYS set the password.
+--
+-- Creating with the password inline and skipping existing roles looks
+-- idempotent but isn't: the roles live in RDS while the passwords live in a
+-- Kubernetes Secret, and those have different lifetimes. `asie.sh pause`
+-- deletes the cluster (and the Secret) while RDS survives, so the next run
+-- generates fresh passwords, finds the roles already present, skips CREATE --
+-- and the new password is never applied. Every workload then fails to
+-- authenticate with no indication why. The unconditional ALTER re-syncs the
+-- role to whatever password this run is using.
+SELECT 'CREATE ROLE asie_app_user LOGIN'
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'asie_app_user')\gexec
+ALTER ROLE asie_app_user LOGIN PASSWORD :'asie_app_user_password';
 
-SELECT 'CREATE ROLE airflow_user LOGIN PASSWORD ''' || :'airflow_user_password' || ''''
+SELECT 'CREATE ROLE airflow_user LOGIN'
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'airflow_user')\gexec
+ALTER ROLE airflow_user LOGIN PASSWORD :'airflow_user_password';
 
-SELECT 'CREATE ROLE mlflow_user LOGIN PASSWORD ''' || :'mlflow_user_password' || ''''
+SELECT 'CREATE ROLE mlflow_user LOGIN'
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mlflow_user')\gexec
+ALTER ROLE mlflow_user LOGIN PASSWORD :'mlflow_user_password';
 
 GRANT ALL PRIVILEGES ON DATABASE asie_app TO asie_app_user;
 GRANT ALL PRIVILEGES ON DATABASE airflow_db TO airflow_user;
