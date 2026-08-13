@@ -19,7 +19,13 @@ dvc-s3
 boto3
 
 # --- Storage (Postgres via RDS; SQLite locally) ---
-SQLAlchemy==2.*
+# Airflow 2.10.x is NOT compatible with SQLAlchemy 2.x -- its ORM models use
+# legacy (non-Mapped[]) annotations, so 2.x raises MappedAnnotationError on
+# TaskInstance.dag_model and the migration job dies before creating a single
+# table. This was pinned to 2.* during the Postgres port, which silently
+# broke Airflow while leaving the serving image fine.
+# src/db/engine.py passes future=True so its 2.0-style API works on 1.4 too.
+SQLAlchemy>=1.4.36,<2.0
 psycopg2-binary
 
 # --- Experiment Tracking & Observability ---

@@ -19,6 +19,11 @@ def get_engine() -> Engine:
     db.t4g.micro (~112 max_connections) shared across 3 databases and
     several pods/pool.
     """
+    # future=True below is required, not cosmetic. This module runs inside the
+    # Airflow image too, and Airflow 2.10 pins SQLAlchemy <2.0 -- where the
+    # 2.0-style API this code uses (conn.commit() on a Connection) only exists
+    # under future=True. On SQLAlchemy 2.x the flag is accepted and is a no-op,
+    # so one code path serves both images.
     global _engine
     if _engine is None:
         url = os.getenv("ASIE_DATABASE_URL", DEFAULT_DATABASE_URL)
@@ -32,11 +37,19 @@ def get_engine() -> Engine:
             # doesn't accept pool_size/max_overflow — create_engine() raises
             # TypeError if you pass them here.
             _engine = create_engine(
-                url, pool_pre_ping=True, connect_args={"check_same_thread": False}
+                url,
+                future=True,
+                pool_pre_ping=True,
+                connect_args={"check_same_thread": False},
             )
         else:
             _engine = create_engine(
-                url, pool_pre_ping=True, pool_size=2, max_overflow=3, pool_recycle=1800
+                url,
+                future=True,
+                pool_pre_ping=True,
+                pool_size=2,
+                max_overflow=3,
+                pool_recycle=1800,
             )
     return _engine
 

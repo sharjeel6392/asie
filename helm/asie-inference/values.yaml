@@ -64,7 +64,11 @@ serviceMonitor:
   additionalLabels: {}
 
 initContainer:
-  image: "amazon/aws-cli:2"
+  # AWS's own public registry, not Docker Hub. Two reasons: `amazon/aws-cli:2`
+  # does not exist as a tag on Docker Hub at all (the pull failed with
+  # "not found", stranding the pod in Init:ImagePullBackOff), and public.ecr.aws
+  # has no anonymous pull rate limit, unlike Docker Hub.
+  image: "public.ecr.aws/aws-cli/aws-cli:latest"
 
 # This is for setting Kubernetes Annotations to a Pod.
 # For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
