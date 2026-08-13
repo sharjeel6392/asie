@@ -157,12 +157,20 @@ Landed and verified:
 - ✅ **Charts authored and validated** (`helm template` renders clean): `helm/asie-mlflow/` written from scratch, `eks/airflow-values.yaml` for the official chart at `LocalExecutor`.
 - ✅ **`asie.sh` rewritten** — fixed the live namespace bug (`asie-inference-namespace` vs. the real `asie-inference`) and the undefined `$RELEASE_NAME`, and extended to a 13-step flow covering all three workloads.
 
-Not yet done — blocked on the environment, not the code:
+**Deployed and verified 2026-08-14**, once IPv4 connectivity returned:
 
-- ⏸ Push all three images to ECR. All three are built locally (inference 2.05 GB, MLflow 1.7 GB, Airflow 4.84 GB) and all three ECR repos are still empty.
-- ⏸ `helm install` MLflow, Airflow, and the updated inference chart, and verify the end-to-end path: initContainer S3 sync → `POST /predict` → a row in RDS `inference_logs`. All downstream of the images landing.
-- ⏸ A full `./asie.sh down && up` cycle — the real acceptance test, given how much of this work exists to make that script trustworthy again.
-- ⏸ `terraform apply` for the S3 lifecycle rule (validated, not applied).
+- ✅ All three images pushed to ECR; the whole stack deployed via `./asie.sh up`.
+- ✅ End-to-end path confirmed: initContainer syncs 961 MB of models from S3 → `POST /predict` through the ALB → rows in RDS `inference_logs` (verified by direct `psql` query).
+- ✅ `terraform apply` clean, S3 lifecycle rule live, orphaned multipart uploads cleared.
+
+The first real run surfaced four failures that no amount of offline validation would have caught — every one of them left pods that *looked* healthy:
+
+1. **Airflow migrations crash-looped.** `requirements_airflow.txt` pinned `SQLAlchemy==2.*`, added during the Postgres port where it was correct for the serving image and silently wrong for Airflow. Airflow 2.10's ORM still uses legacy non-`Mapped[]` annotations, so 2.x raises `MappedAnnotationError` on `TaskInstance.dag_model` and the migration job dies before creating a single table. Pinned `>=1.4.36,<2.0`; `src/db/engine.py` gained `future=True` so its 2.0-style API works on 1.4 as well (a no-op on 2.x, so one code path serves both images).
+2. **Inference stuck in `Init:ImagePullBackOff`.** `amazon/aws-cli:2` is not a real tag on Docker Hub. Switched to `public.ecr.aws/aws-cli/aws-cli:latest`, which also avoids Docker Hub's anonymous pull limit.
+3. **MLflow OOMKilled** at the 1 GiB limit before serving a request — MLflow 3.x runs background job infrastructure in-process (huey consumers, 5 threads per worker) that 2.x did not. One worker, 2 GiB.
+4. **Airflow loaded zero DAGs.** `datasets` was dropped in the Day 4 requirements split; the DAG imports it via `src.models.factory`. Scheduler and webserver were both `Running` the entire time, which is exactly why this wasn't obvious.
+
+Also hit a **StatefulSet deadlock**: a crash-looping scheduler pod blocks its own rolling update, so the fixed image never rolled out until the pod was deleted manually. Worth knowing — `asie.sh` cannot resolve that on its own.
 
 **The blocker, diagnosed:** this host cannot sustain a large upload. 12 push attempts failed across all three images — including the smallest — and the decisive test was non-Docker: a plain `aws s3 cp` of a 200 MB file died at part 10 of its multipart upload. Small requests are unaffected throughout (`kubectl`, `aws s3 ls`, a 164 KB `dvc push`, `docker pull hello-world` all fine). The error is `WSAECONNABORTED` — "an established connection was aborted by the software in your host machine" — which Windows emits for a *local* abort, so the usual suspects are a VPN client, endpoint-security TLS inspection, or the router, not AWS. `max-concurrent-uploads: 1` and a Docker restart were tried and did not help, consistent with the problem sitting below Docker.
 
@@ -183,7 +191,15 @@ Written offline while the images remain unpushable, so the next connectivity win
 - ✅ **ServiceMonitor** (`helm/asie-inference/templates/servicemonitor.yaml`). This required fixing two prerequisites: the Service's port was **unnamed** and the Service carried **no labels** — a ServiceMonitor selects Services by label and references ports by name, so it could not have targeted this Service as written. The template is gated behind `serviceMonitor.enabled` (default off) so the chart still installs on a cluster without the Prometheus Operator CRDs, where an ungated manifest would fail the whole release.
 - ✅ **kube-prometheus-stack values** (`eks/monitoring-values.yaml`). Resource requests are set explicitly rather than left at chart defaults: 2× t3.xlarge is ~7.8 allocatable CPU and inference alone can request 4.5 once the HPA scales to 3. `serviceMonitorSelectorNilUsesHelmValues: false` is the setting that actually lets Prometheus discover ServiceMonitors in other namespaces — left at its default, the Targets page is simply empty with no error logged anywhere. Control-plane scrape jobs (`kubeEtcd`, `kubeControllerManager`, `kubeScheduler`, `kubeProxy`) are disabled: on EKS those endpoints are AWS-managed and unreachable, so they sit permanently down and fire constant `TargetDown` alerts, which is worse than no monitoring because it trains you to ignore the alert list.
 - ✅ **PrometheusRule + Grafana dashboard** as version-controlled manifests (`eks/monitoring-rules.yaml`, `eks/grafana-dashboard-asie.yaml`). The two drift rules port over unchanged; added staleness, 5xx error-rate, p95 latency, and model-not-loaded rules now that the metrics exist. `prometheus/alerts.yml` and `alertmanager.yml` stay in the repo for the local standalone workflow the README documents — the deployed Alertmanager config repoints the webhook from `localhost:8000` to the in-cluster Service DNS.
-- ⏸ **Not yet run:** the whole stack. See the Days 4+5 blocker — the images still aren't in ECR.
+- ✅ **Deployed and verified 2026-08-14.** 20/20 Prometheus targets up, the `asie-inference` ServiceMonitor scraping, all six ASIE alert rules loaded, Grafana serving on the shared ALB at `/grafana`, and one ALB with zero stray LoadBalancer Services.
+
+Three monitoring bugs only became visible once it was actually running, and all three were mine:
+
+1. **There was no Alertmanager at all.** Helm merges `route` as a map but *replaces* `receivers` as a list. The chart's default route carries a child `routes:` entry pointing at a receiver named `null` (it swallows the always-firing Watchdog/InfoInhibitor heartbeats); overriding `receivers` without redefining `null` deleted it while that child route survived the merge, so the operator refused to build the config secret — no StatefulSet, no pod, and **every alert silently went nowhere**. `helm template` cannot catch this: the chart renders valid YAML and the rejection happens in the operator at runtime. The only symptom was `PrometheusNotConnectedToAlertmanagers`, which was correct and easy to dismiss as noise.
+2. **`DriftMetricsStale` fired immediately on a fresh deploy.** A Gauge that has never been `.set()` still exports as `0`, so with an empty `drift_metrics` table the rule evaluated `time() - 0` ≈ 1.8 billion seconds. Guarded with `> 0`.
+3. **`TargetDown` fired permanently for Grafana.** `serve_from_sub_path` — added so Grafana works behind the shared ALB — moves *every* route under `/grafana`, including Grafana's own `/metrics`, which the chart's ServiceMonitor still scraped at `/metrics` (301). Verified directly: `/metrics` → 301, `/grafana/metrics` → 200.
+
+Points 2 and 3 are the same failure this section's values file already disables the control-plane scrape jobs to avoid: **an always-firing alert is worse than no alert, because it teaches you to ignore the list.** Both were introduced while trying to prevent exactly that.
 
 ### Day 6 addendum — ingress consolidation, partially delivered
 
