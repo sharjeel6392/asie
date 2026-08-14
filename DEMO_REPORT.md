@@ -214,4 +214,8 @@ Every one of these was found by running the system, not by reading it. They are 
 | RDS db.t4g.micro | ~$0.016/hr |
 | **Running total** | **~$0.35/hr** |
 
+### Raw evidence
+
+The measurements above were captured from the live cluster before teardown and are preserved in `docs/demo-evidence.txt` — ArgoCD Application states, the five canary AnalysisRuns, ALB target-group weights, 1402 logged inferences grouped by deployed model version, the drift history, and the two commits the platform authored itself.
+
 `./asie.sh pause` removes the cluster and keeps S3, ECR, RDS and the VPC, cutting the hourly cost to storage plus NAT plus RDS. `./asie.sh resume` rebuilds in ~25 minutes. Both verified.

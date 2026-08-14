@@ -1,0 +1,95 @@
+ASIE — live evidence captured 2026-08-14 17:15 UTC
+==================================================================
+
+## ArgoCD Applications
+  airflow                  OutOfSync    Healthy
+  argo-rollouts            Synced       Healthy
+  asie-inference           Synced       Healthy
+  asie-ingress-and-rules   Synced       Healthy
+  asie-mlflow              Synced       Healthy
+  asie-root                Synced       Healthy
+  kube-prometheus-stack    Synced       Healthy
+  namespaces               Synced       Healthy
+
+## Rollout state
+  phase=Healthy  step=4  current=56bfc4f6c5  stable=56bfc4f6c5
+  deployed primary: 286aecc660884060ac72f46ce3c4ab29
+  deployed shadow : 286aecc660884060ac72f46ce3c4ab29
+
+## AnalysisRuns (canary gates)
+  asie-56bfc4f6c5-2-3        Successful
+  asie-56bfc4f6c5-4-1        Successful
+  asie-56bfc4f6c5-4-3        Successful
+  asie-5947895ffb-3-1        Successful
+  asie-5947895ffb-3-3        Successful
+
+## ALB traffic routing
+{"Type":"forward","ForwardConfig":{"TargetGroups":[{"ServiceName":"asie-canary","ServicePort":"80","Weight":0},{"ServiceName":"asie-stable","ServicePort":"80","Weight":100}]}}
+
+## Pods
+  airflow        airflow-scheduler-0                        Running
+  airflow        airflow-webserver-7cf598449-9fhzj          Running
+  argo-rollouts  argo-rollouts-fc5b7958f-cp2sg              Running
+  argocd         argocd-application-controller-0            Running
+  argocd         argocd-applicationset-controller-dd88b555b-stphw Running
+  argocd         argocd-redis-56cc844c76-z48sv              Running
+  argocd         argocd-repo-server-86d565f897-r2hm9        Running
+  argocd         argocd-server-754fff784c-c955v             Running
+  asie-inference asie-56bfc4f6c5-gj6nx                      Running
+  mlflow         asie-mlflow-6b9b4c9d8d-k7vjj               Running
+  monitoring     alertmanager-kube-prom-alertmanager-0      Running
+  monitoring     asie-grafana-7dc5c76649-bmw6s              Running
+  monitoring     kube-prom-operator-7dcd9679bb-fxzzv        Running
+  monitoring     kube-prometheus-stack-kube-state-metrics-7549d9cc6d-w8gvz Running
+  monitoring     kube-prometheus-stack-prometheus-node-exporter-ps8nr Running
+  monitoring     kube-prometheus-stack-prometheus-node-exporter-xkq69 Running
+  monitoring     prometheus-kube-prom-prometheus-0          Running
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1643, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1848, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1988, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2365, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1969, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+sqlalchemy.exc.ProgrammingError: (psycopg2.errors.UndefinedColumn) column "drift_score" does not exist
+LINE 1: SELECT drift_score, timestamp FROM drift_metrics ORDER BY ti...
+               ^
+
+[SQL: SELECT drift_score, timestamp FROM drift_metrics ORDER BY timestamp DESC LIMIT 8]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+command terminated with exit code 1
+## inference_logs grouped by deployed model version
+  primary=ddb90ee0  shadow=286aecc6  n=  879  p95_avg=67.3ms  shadow_avg=64.7ms  disagreements=0
+  primary=286aecc6  shadow=286aecc6  n=  486  p95_avg=65.7ms  shadow_avg=71.0ms  disagreements=0
+  primary=v_01      shadow=v_02      n=   37  p95_avg=32.5ms  shadow_avg=26.4ms  disagreements=1
+## totals: rows=1402  window 2026-08-13 18:37:40.202896+00:00 -> 2026-08-14 17:10:58.150061+00:00
+## drift_metrics (most recent 8)
+  0.74236685   2026-08-14 16:43:19.171483+00:00
+  0.41606194   2026-08-14 16:42:23.297302+00:00
+  0.73491126   2026-08-14 16:42:22.970294+00:00
+  0.0          2026-08-14 16:42:22.821230+00:00
+  0.0          2026-08-14 16:40:05.917364+00:00
+  0.4302564    2026-08-13 19:33:00.806082+00:00
+  0.0          2026-08-13 19:32:06.627947+00:00
+
+## Automated commits made by the platform itself
+  c434830  17:02  promote: primary -> 286aecc660884060ac72f46ce3c4ab29
+  7fefe69  16:23  rollback: primary -> ddb90ee0a2654f5cac1bff3f66fe76f3
+
+## Week 12 commit count: 37
+## ECR images
+218b148
+## S3 model versions
+  286aecc660884060ac72f46ce3c4ab29/
+  ddb90ee0a2654f5cac1bff3f66fe76f3/
+  primary/
+  shadow/
+  22:32:08
