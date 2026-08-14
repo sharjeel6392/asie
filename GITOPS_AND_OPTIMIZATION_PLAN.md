@@ -2,8 +2,8 @@
 
 Covers the next two weekly phases of ASIE, **in the order they will actually be done**:
 
-1. **GitOps Deployment** (Weekly Plan Week 13) — *now*
-2. **GPU & Cost Optimization** (Weekly Plan Week 12) — *after*
+1. **GitOps Deployment** (Weekly Plan Week 12) — *now*
+2. **GPU & Cost Optimization** (Weekly Plan Week 13) — *after*
 
 Companion to `AWS_ARCHITECTURE.md`, which covers Week 11. Same intent: record the plan *and* the reasoning, including what was rejected, so the decisions are legible later.
 
@@ -11,25 +11,25 @@ Companion to `AWS_ARCHITECTURE.md`, which covers Week 11. Same intent: record th
 
 ## 0. Why these two weeks are being swapped
 
-The Weekly Plan numbers GPU & Cost as 12 and GitOps as 13. We are doing 13 first. The week numbers stay as-is — they are historical labels, and renumbering rewrites the plan for no benefit.
+The Weekly Plan originally numbered GPU & Cost as 12 and GitOps as 13. They have been **renumbered in Notion** rather than merely reordered: GitOps is now Week 12 (2026-08-14 → 08-20), GPU & Cost is Week 13 (08-21 → 08-27), and Week 14 follows (08-28 → 09-03). Numbering follows execution order, so "Week 12" means the same thing in Notion, in this document, and in conversation.
 
 The reasoning:
 
-**The Week 14 demo is "drift → retrain → deploy end-to-end." GitOps is the only missing leg.** Drift detection works. Retraining works — the last of it was fixed on 2026-08-14. The deploy leg does not exist at all: `retraining_pipeline.py` pushes new weights to S3, but serving pods hold whatever their initContainer synced at startup, and nothing triggers a rollout. Week 12 makes a working leg faster; Week 13 builds a leg that isn't there.
+**The Week 14 demo is "drift → retrain → deploy end-to-end." GitOps is the only missing leg.** Drift detection works. Retraining works — the last of it was fixed on 2026-08-14. The deploy leg does not exist at all: `retraining_pipeline.py` pushes new weights to S3, but serving pods hold whatever their initContainer synced at startup, and nothing triggers a rollout. GPU & Cost makes a working leg faster; GitOps builds a leg that isn't there.
 
 **The ordering risk is asymmetric.** Running short on time with GPU-accelerated retraining but no auto-deploy leaves the closed loop visibly broken — the single most compelling property of the project. Running short with GitOps done but CPU-only retraining is a complete story that is merely slower.
 
-**Cost work done first would be done twice.** Spot instances, node selectors, tolerations, right-sized resource requests, HPA tuning — every one of those edits the Helm values and manifests ArgoCD is about to take ownership of. Done by hand now, they get re-encoded declaratively next week. Done after, each cost change ships as a pull request *through* the pipeline, and Week 12 becomes live demo material for Week 13's work.
+**Cost work done first would be done twice.** Spot instances, node selectors, tolerations, right-sized resource requests, HPA tuning — every one of those edits the Helm values and manifests ArgoCD is about to take ownership of. Done by hand now, they get re-encoded declaratively next week. Done after, each cost change ships as a pull request *through* the pipeline, and the GPU/cost week becomes live demo material for the GitOps week's work.
 
 **Spot instances introduce random pod death.** Declarative reconciliation and one-click rollback should exist *before* that failure mode is introduced, not while debugging it.
 
 The one real argument for cost-first is that the cluster bills while it is up (EKS control plane + NAT Gateway + RDS + ALB, roughly $130–140/month if left running). That is already mitigated operationally by `./asie.sh pause` and `down`. It is a habit, not a week of engineering.
 
-**Action independent of ordering:** file the AWS GPU quota increase (`g4dn`/`g5` On-Demand vCPUs) now. New accounts frequently have a limit of 0 and approval can take several days — otherwise it silently consumes the first two days of Week 12.
+**Action independent of ordering:** file the AWS GPU quota increase (`g4dn`/`g5` On-Demand vCPUs) now. New accounts frequently have a limit of 0 and approval can take several days — otherwise it silently consumes the first two days of the GPU & Cost week.
 
 ---
 
-## 1. Week 13 — GitOps Deployment
+## 1. Week 12 — GitOps Deployment
 
 ### 1.1 The problem being solved
 
@@ -89,7 +89,7 @@ Note that ASIE has *two* things that can change independently: the container ima
 
 ---
 
-## 2. Week 12 — GPU & Cost Optimization
+## 2. Week 13 — GPU & Cost Optimization
 
 Deferred to second, and shaped by the fact that GitOps will already exist: every change below lands as a pull request, not a `--set` flag.
 
@@ -110,8 +110,8 @@ Deferred to second, and shaped by the fact that GitOps will already exist: every
 | | |
 |---|---|
 | Week 11 — AWS Migration | ✅ Completed 2026-08-14 |
-| Week 13 — GitOps Deployment | 🔵 Active, started 2026-08-14 — branch `gitops-deployment` (off `aws-migration`) |
-| Week 12 — GPU & Cost Optimization | ⚪ Next |
-| Week 14 — Closed Loop & Demo | ⚪ Planned |
+| Week 12 — GitOps Deployment | 🔵 Active, 2026-08-14 → 08-20 — branch `gitops-deployment` (off `main`). Day 1 design: `DEPLOYMENT_ARCHITECTURE.md` |
+| Week 13 — GPU & Cost Optimization | ⚪ Next, 2026-08-21 → 08-27 |
+| Week 14 — Closed Loop & Demo | ⚪ Planned, 2026-08-28 → 09-03 |
 
 This document is updated as reality diverges from the plan, in the manner of `AWS_ARCHITECTURE.md` §"what the first real deploy surfaced" — the divergences are the part worth reading later.
