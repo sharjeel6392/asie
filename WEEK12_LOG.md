@@ -72,8 +72,48 @@ Blocked on two decisions (cluster up? repo credential type?), so this day splits
 
 `bash -n` passes. **Nothing here has been run against a cluster** — there isn't one up.
 
-### Blocked on
+### Outcome ✅ — full rebuild, GitOps deploy verified end to end
 
-1. **Is the cluster up?** Day 3's remainder is install + first sync; `./asie.sh up` is real spend and the user's call.
-2. **Repo credential** — read-only deploy key vs PAT. A GitHub-side action nobody else can do.
-3. **A second, write-scoped credential** for the promotion commit from Airflow. Deliberately separate, so a compromised ArgoCD cannot rewrite desired state.
+`./asie.sh pause` then `./asie.sh up` against a real account. Cluster destroyed and recreated from scratch (14:29), ArgoCD installed (15:08), all seven Applications created and syncing from `origin/gitops-deployment`.
+
+**Verified live, through the ALB:**
+
+```
+/health   {"status":"ok","primary_ready":true,"shadow_ready":true,...}
+/predict  {"predictions":[{"label":"LABEL_2","score":0.9944}],
+           "model_version":"ddb90ee0a2654f5cac1bff3f66fe76f3","latency_ms":93.1}
+```
+
+Both Day 2 fixes are confirmed against reality, not just tests:
+
+- **6.1** — the initContainer fetched two run_id-keyed S3 prefixes and the app loaded both models. The pod template carries `asie.io/primary-model-version` and `asie.io/shadow-model-version`.
+- **6.2** — `inference_logs` now shows the before/after in one query: the newest row carries `ddb90ee0…`/`286aecc6…`, the 37 older rows carry `v_01`/`v_02`. That is exactly the mixture the promotion gate would have computed over.
+
+**The promotion gate, run against live production data:**
+
+```
+samples=1, failures=0, disagreement=0.0,
+shadow_p95=99.6ms vs primary_p95=93.1ms (ratio 1.07, limit 1.25)
+DECISION: insufficient_data — "only 1 shadow predictions, need 1000"
+```
+
+Correctly scoped to the shadow's run_id and correctly refusing: the shadow is offline-better (0.9824 vs 0.9715) but has no online evidence yet.
+
+### What the rebuild caught that nothing offline could
+
+**The ALB controller gap, and it was worse than predicted.** Nothing in the repo installed it. Both Ingress objects were created by ArgoCD and sat with **no address for two hours** — every Application `Healthy`, every pod `Running`, and nothing reachable from outside. The same "looks healthy, isn't" failure mode as Week 11. Added `install_alb_controller()` to `asie.sh`, wired into `up` and `resume`; the ALB now provisions and both Ingresses share one load balancer, confirming the `group.name` merge.
+
+**`create_cluster` tested existence, not status.** `eksctl get cluster` succeeds for a `DELETING` cluster, so a back-to-back `pause`/`up` — the obvious way to test a rebuild — reported "already exists, skipping creation" and handed every later step a control plane vanishing underneath it. Now reads `cluster.status` and waits it out.
+
+**The deploy key round-trip was broken twice.** The Windows `aws` CLI emits CRLF, which makes an OpenSSH key fail to parse as `error in libcrypto` → `Permission denied (publickey)` — indistinguishable from a key never added to GitHub. And `$( )` strips the trailing newline an OpenSSH key requires. Both caught by testing the key against GitHub *before* relying on it.
+
+**The gate cannot run in the serving image.** `boto3` is absent from the slimmed serving requirements (correct — the initContainer does the S3 work), so `load_registry()` fails there. The promotion task belongs in the Airflow image, which has the full dependency set. Worth knowing before Day 4 wires it.
+
+### Open, carried to Day 4
+
+- **`airflow` OutOfSync** on `StatefulSet/airflow-scheduler`, and **`asie-root` OutOfSync** on exactly the two *multi-source* Applications. All workloads are Healthy with zero restarts, so this is phantom drift — most likely ArgoCD defaulting fields on `sources:`/`ref:` that the plain YAML doesn't carry. Needs `argocd app diff` to confirm rather than guess. Harmless now, but with `selfHeal: true` a permanent diff is a standing re-sync loop.
+- **Process-liveness checks proved unreliable here.** A run that was very much alive showed no matching processes and an empty (block-buffered) log, and I reported it as dead. AWS state was the accurate signal. Poll the thing being built, not the builder.
+
+### Still blocked
+
+- **Write-scoped credential** for the promotion commit from Airflow — deliberately separate from ArgoCD's read key so a compromised ArgoCD cannot rewrite desired state.

@@ -25,6 +25,9 @@ MONITORING_RELEASE="kube-prometheus-stack"
 
 # GitOps control plane. ArgoCD owns every workload from here on; this script
 # only installs ArgoCD itself and points it at the repo.
+# Matches what was installed by hand in Week 11 and verified working.
+ALB_CONTROLLER_CHART_VERSION="3.5.0"
+
 ARGOCD_NAMESPACE="argocd"
 ARGOCD_CHART_VERSION="7.7.11"
 ARGOCD_REPO_SECRET="asie-repo-creds"
@@ -152,6 +155,38 @@ cluster_addons() {
     kubectl patch storageclass gp2 \
         -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}' \
         > /dev/null 2>&1 || true
+}
+
+install_alb_controller() {
+    # Nothing in this repo installed this until now -- it was applied by hand
+    # during Week 11 Day 3 and survived only because the cluster did. The first
+    # real rebuild proved the gap: both Ingress objects were created by ArgoCD
+    # and sat with no ADDRESS for two hours, because the controller that turns
+    # an Ingress into an ALB did not exist. Everything looked healthy; nothing
+    # was reachable.
+    #
+    # Deliberately bootstrap rather than an ArgoCD Application: the Ingress in
+    # wave 3 depends on it, and a controller that provisions the load balancer
+    # the whole stack is reached through belongs with the cluster, not with the
+    # workloads it serves.
+    step "Installing the AWS Load Balancer Controller..."
+
+    # Cluster-scoped IRSA -- the IAM policy itself is account-scoped and
+    # survives cluster deletion, so this re-binds an existing policy.
+    eksctl create iamserviceaccount \
+        --cluster $CLUSTER_NAME --region $REGION \
+        --namespace kube-system --name aws-load-balancer-controller \
+        --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy" \
+        --override-existing-serviceaccounts --approve
+
+    helm repo add eks https://aws.github.io/eks-charts > /dev/null 2>&1 || true
+    helm repo update eks > /dev/null
+    helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+        --version $ALB_CONTROLLER_CHART_VERSION \
+        --namespace kube-system \
+        -f eks/aws-load-balancer-controller-values.yaml \
+        --set clusterName=$CLUSTER_NAME \
+        --wait --timeout 5m
 }
 
 ensure_namespaces() {
@@ -554,6 +589,7 @@ case "$1" in
         provision_infra
         create_cluster
         cluster_addons
+        install_alb_controller
         ensure_namespaces
         create_irsa
         bootstrap_db
@@ -592,6 +628,7 @@ EOF
         # No upload_models / build_push_images: S3 and ECR survived the pause.
         create_cluster
         cluster_addons
+        install_alb_controller
         ensure_namespaces
         create_irsa
         bootstrap_db
