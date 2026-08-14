@@ -34,11 +34,8 @@ from src.constants import (
     MODEL_CLASS_NAME,
     PREDICT_ROUTE,
     PRIMARY_MODEL_ROLE,
-    PRIMARY_MODEL_VERSION,
     REQUEST_SOURCE_API,
-    SERVED_MODEL_VERSION,
     SHADOW_MODEL_ROLE,
-    SHADOW_MODEL_VERSION,
     WEBHOOK_ROUTE,
 )
 
@@ -193,13 +190,17 @@ async def predict(req: PredictRequest):
             "true_label": None,
 
             "primary_model_name": MODEL_CLASS_NAME,
-            "primary_model_version": PRIMARY_MODEL_VERSION,
+            # The deployed model's run_id, from the pod env -- not a constant.
+            # The promotion gate evaluates one specific shadow model over its
+            # own live window, which is impossible if every row carries the
+            # same literal.
+            "primary_model_version": Settings.PRIMARY_MODEL_VERSION,
             "primary_prediction": primary['label'],
             "primary_confidence": primary['score'],
             "primary_latency_ms": primary_per_sample_latency,
 
             "shadow_model_name": MODEL_CLASS_NAME if shadow_enabled else None,
-            "shadow_model_version": SHADOW_MODEL_VERSION if shadow_enabled else None,
+            "shadow_model_version": Settings.SHADOW_MODEL_VERSION if shadow_enabled else None,
             "shadow_predictions": shadow['label'] if shadow else None,
             "shadow_confidence": shadow['score'] if shadow else None,
             "shadow_latency_ms": shadow_per_sample_latency,
@@ -214,7 +215,10 @@ async def predict(req: PredictRequest):
     return PredictResponse(
         predictions = primary_pred['predictions'],
         latency_ms= primary_pred['latency_ms'],
-        model_version= SERVED_MODEL_VERSION
+        # What actually served this response is the primary model, so report
+        # its version rather than a separate hardcoded "API version" that
+        # tracked nothing.
+        model_version= Settings.PRIMARY_MODEL_VERSION
     )
 
 @app.get(DRIFT_ROUTE)

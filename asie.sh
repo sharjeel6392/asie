@@ -23,6 +23,28 @@ MONITORING_NAMESPACE="monitoring"
 
 MONITORING_RELEASE="kube-prometheus-stack"
 
+# GitOps control plane. ArgoCD owns every workload from here on; this script
+# only installs ArgoCD itself and points it at the repo.
+# Matches what was installed by hand in Week 11 and verified working.
+ALB_CONTROLLER_CHART_VERSION="3.5.0"
+
+ARGOCD_NAMESPACE="argocd"
+ARGOCD_CHART_VERSION="7.7.11"
+ARGOCD_REPO_SECRET="asie-repo-creds"
+# Must match repoURL in gitops/apps/*.yaml and gitops/bootstrap/root-app.yaml
+# EXACTLY. ArgoCD pairs a credential to an Application by URL, and the SSH and
+# HTTPS forms of the same repo are different URLs to it -- a mismatch means the
+# credential silently does not apply and the Application sits in
+# ComparisonError with a permission-denied that looks like a bad key.
+REPO_URL="git@github.com:sharjeel6392/asie.git"
+# Secrets Manager entry holding the read-only deploy key's PRIVATE half.
+ARGOCD_REPO_SECRET_SM="asie/argocd-repo-read"
+# WRITE-scoped key, mounted by the Airflow pods so the retraining and rollback
+# DAGs can commit model versions. Separate from the read key by design: ArgoCD
+# needs read only, so a compromised ArgoCD cannot rewrite desired state.
+AIRFLOW_REPO_SECRET_SM="asie/airflow-repo-write"
+AIRFLOW_REPO_SECRET="asie-gitops-write"
+
 INFERENCE_RELEASE="asie"
 AIRFLOW_RELEASE="airflow"
 # Must be exactly "asie-mlflow" -- eks/airflow-values.yaml and
@@ -65,14 +87,46 @@ provision_infra() {
     step "Provisioning AWS infrastructure with Terraform..."
     cd aws-provision
     terraform init
+    # Same executable-bit repair as destroy_infra -- `terraform init` can leave
+    # provider binaries at -rw-rw-rw- on this host, and the resulting error
+    # blames the plugin's architecture rather than its permissions. Runs after
+    # init, since that is what writes them.
+    find .terraform -name "*.exe" -exec chmod +x {} \; 2>/dev/null || true
     terraform apply -auto-approve
     cd ..
 }
 
 create_cluster() {
     step "Creating EKS cluster with eksctl..."
-    if eksctl get cluster --name $CLUSTER_NAME --region $REGION > /dev/null 2>&1; then
-        echo "EKS cluster already exists. Skipping creation."
+
+    # Status, not mere existence. `eksctl get cluster` succeeds for a cluster
+    # in DELETING just as it does for a healthy one, so the old existence check
+    # reported "already exists, skipping creation" for a cluster that was
+    # disappearing -- and then handed every later step a control plane that
+    # vanished underneath it. Hit immediately by running `pause` and `up`
+    # back to back, which is the obvious way to test a rebuild.
+    local status
+    status=$(aws eks describe-cluster --name $CLUSTER_NAME --region $REGION \
+             --query 'cluster.status' --output text 2>/dev/null | tr -d '\r')
+    [ -z "$status" ] && status="ABSENT"
+
+    if [ "$status" = "DELETING" ]; then
+        echo "Cluster is DELETING; waiting for it to finish before recreating..."
+        for _ in $(seq 1 60); do
+            sleep 30
+            status=$(aws eks describe-cluster --name $CLUSTER_NAME --region $REGION \
+                     --query 'cluster.status' --output text 2>/dev/null | tr -d '\r')
+            [ -z "$status" ] && { status="ABSENT"; break; }
+            echo "  still $status..."
+        done
+        if [ "$status" = "DELETING" ]; then
+            echo "Cluster still DELETING after 30 minutes; aborting rather than guessing." >&2
+            exit 1
+        fi
+    fi
+
+    if [ "$status" = "ACTIVE" ]; then
+        echo "EKS cluster already exists and is ACTIVE. Skipping creation."
     else
         # Fill eks-cluster.yaml's placeholders from Terraform outputs.
         ./eks/render-cluster-config.sh
@@ -111,6 +165,38 @@ cluster_addons() {
     kubectl patch storageclass gp2 \
         -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}' \
         > /dev/null 2>&1 || true
+}
+
+install_alb_controller() {
+    # Nothing in this repo installed this until now -- it was applied by hand
+    # during Week 11 Day 3 and survived only because the cluster did. The first
+    # real rebuild proved the gap: both Ingress objects were created by ArgoCD
+    # and sat with no ADDRESS for two hours, because the controller that turns
+    # an Ingress into an ALB did not exist. Everything looked healthy; nothing
+    # was reachable.
+    #
+    # Deliberately bootstrap rather than an ArgoCD Application: the Ingress in
+    # wave 3 depends on it, and a controller that provisions the load balancer
+    # the whole stack is reached through belongs with the cluster, not with the
+    # workloads it serves.
+    step "Installing the AWS Load Balancer Controller..."
+
+    # Cluster-scoped IRSA -- the IAM policy itself is account-scoped and
+    # survives cluster deletion, so this re-binds an existing policy.
+    eksctl create iamserviceaccount \
+        --cluster $CLUSTER_NAME --region $REGION \
+        --namespace kube-system --name aws-load-balancer-controller \
+        --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy" \
+        --override-existing-serviceaccounts --approve
+
+    helm repo add eks https://aws.github.io/eks-charts > /dev/null 2>&1 || true
+    helm repo update eks > /dev/null
+    helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+        --version $ALB_CONTROLLER_CHART_VERSION \
+        --namespace kube-system \
+        -f eks/aws-load-balancer-controller-values.yaml \
+        --set clusterName=$CLUSTER_NAME \
+        --wait --timeout 5m
 }
 
 ensure_namespaces() {
@@ -185,24 +271,21 @@ build_push_images() {
     docker push $MLFLOW_ECR_URI:latest
 }
 
-# The image tag to deploy. `up` builds and pushes $GIT_SHA, but `resume`
-# doesn't build at all -- if HEAD has moved since the last push, $GIT_SHA
-# names a tag that was never pushed and every pod would sit in ImagePullBackOff.
-# Fall back to :latest when the commit's tag isn't actually in ECR.
-resolve_image_tag() {
-    if aws ecr describe-images --repository-name $INFERENCE_ECR_REPO --region $REGION \
-        --image-ids imageTag=$GIT_SHA > /dev/null 2>&1; then
-        DEPLOY_TAG=$GIT_SHA
-    else
-        echo "No image tagged $GIT_SHA in ECR; falling back to :latest."
-        DEPLOY_TAG=latest
-    fi
-    echo "Deploying image tag: $DEPLOY_TAG"
-}
+# ---------------------------------------------------------------------------
+# BOOTSTRAP -- everything below hands off to ArgoCD
+#
+# deploy_workloads() used to live here: five `helm upgrade --install` calls and
+# three `kubectl apply`s that WERE the definition of what ran in the cluster.
+# Under GitOps that definition lives in gitops/, and this script must not also
+# deploy -- two controllers reconciling the same releases fight, and ArgoCD
+# wins on a delay, so the symptom is a helm change that "works" and then
+# silently reverts minutes later.
+#
+# What remains is the irreducible bootstrap: ArgoCD cannot install itself, and
+# the secrets below cannot live in git.
+# ---------------------------------------------------------------------------
 
-deploy_workloads() {
-    resolve_image_tag
-
+bootstrap_secrets() {
     step "Ensuring the Airflow webserver secret key exists (fixed, not chart-regenerated -- regenerating invalidates all sessions)..."
     kubectl -n $AIRFLOW_NAMESPACE get secret airflow-webserver-secret > /dev/null 2>&1 || \
         kubectl -n $AIRFLOW_NAMESPACE create secret generic airflow-webserver-secret \
@@ -215,47 +298,146 @@ deploy_workloads() {
             --from-literal=admin-user=admin \
             --from-literal=admin-password=$(openssl rand -base64 18 | tr -d '/+=')
 
-    step "Deploying MLflow (before Airflow -- the DAG's env points at its Service DNS)..."
-    helm upgrade --install $MLFLOW_RELEASE ./helm/asie-mlflow \
-        --namespace $MLFLOW_NAMESPACE \
-        --set image.repository=$MLFLOW_ECR_URI \
-        --set image.tag=$DEPLOY_TAG
+    # TODO (Day 3, blocked on a Secrets Manager entry): these two move to
+    # External Secrets Operator, at which point this function disappears and
+    # the last imperative step in the deploy path goes with it.
 
-    step "Deploying Airflow..."
-    helm repo add apache-airflow https://airflow.apache.org > /dev/null 2>&1 || true
-    helm repo update apache-airflow > /dev/null
-    helm upgrade --install $AIRFLOW_RELEASE apache-airflow/airflow \
-        --version 1.16.0 \
-        --namespace $AIRFLOW_NAMESPACE \
-        -f eks/airflow-values.yaml \
-        --set images.airflow.repository=$AIRFLOW_ECR_URI \
-        --set images.airflow.tag=$DEPLOY_TAG
+    step "Installing the GitOps WRITE deploy key for Airflow..."
+    # Airflow is the only workload that commits to the repo: the retraining
+    # pipeline deploys a candidate as shadow, and asie_auto_rollback reverts a
+    # failing primary. Separate key from ArgoCD's read-only one, so a
+    # compromised ArgoCD cannot rewrite desired state.
+    #
+    # Bootstrapped here rather than via External Secrets for the same reason as
+    # the ArgoCD credential: eks/airflow-values.yaml mounts this secret as a
+    # volume, so a missing secret is not a degraded feature -- the scheduler
+    # and webserver pods never start at all.
+    local write_key
+    write_key=$(aws secretsmanager get-secret-value \
+                  --secret-id "$AIRFLOW_REPO_SECRET_SM" \
+                  --region "$REGION" \
+                  --query SecretString --output text 2>/dev/null | tr -d '\r')
 
-    step "Deploying kube-prometheus-stack (before inference -- it owns the ServiceMonitor CRD)..."
-    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts > /dev/null 2>&1 || true
-    helm repo update prometheus-community > /dev/null
-    helm upgrade --install $MONITORING_RELEASE prometheus-community/kube-prometheus-stack \
-        --namespace $MONITORING_NAMESPACE \
-        -f eks/monitoring-values.yaml \
+    if [ -z "$write_key" ]; then
+        echo "WARNING: no $AIRFLOW_REPO_SECRET_SM in Secrets Manager." >&2
+        echo "  Airflow pods mount this secret and will not start without it." >&2
+        echo "  Create a WRITE-scoped deploy key and store it, then re-run." >&2
+        exit 1
+    fi
+
+    # Same CR strip and trailing newline as the ArgoCD key -- the Windows aws
+    # CLI emits CRLF, and an OpenSSH key with carriage returns or without its
+    # final newline fails to parse in a way that reads like a revoked key.
+    kubectl -n $AIRFLOW_NAMESPACE create secret generic $AIRFLOW_REPO_SECRET \
+        --from-literal=ssh-privatekey="${write_key}"$'\n' \
+        --dry-run=client -o yaml | kubectl apply -f - > /dev/null
+    echo "GitOps write key installed."
+}
+
+ensure_repo_credential() {
+    # ArgoCD cannot read a private repository without a credential, and the
+    # failure is quiet in the worst way: the Application appears, reports
+    # "ComparisonError", and nothing ever deploys -- a cluster that looks
+    # provisioned and serves nothing.
+    #
+    # Sourced from Secrets Manager rather than External Secrets, which is NOT
+    # an inconsistency: ESO is itself deployed BY ArgoCD, so ArgoCD cannot read
+    # the repo to learn how to deploy the thing that would grant it the ability
+    # to read the repo. This one credential has to be bootstrapped, and doing
+    # it from Secrets Manager is what makes it survive `pause`/`down` instead
+    # of needing to be recreated by hand on every rebuild.
+    step "Installing the ArgoCD repository credential from Secrets Manager..."
+
+    # `| tr -d '\r'` is load-bearing on Windows. The aws CLI there emits CRLF,
+    # and an OpenSSH private key with carriage returns fails to parse -- ssh
+    # reports "error in libcrypto" and then "Permission denied (publickey)",
+    # which reads exactly like a key that was never added to GitHub. Confirmed
+    # by testing the same key with and without the strip.
+    local key
+    key=$(aws secretsmanager get-secret-value \
+            --secret-id "$ARGOCD_REPO_SECRET_SM" \
+            --region "$REGION" \
+            --query SecretString --output text 2>/dev/null | tr -d '\r')
+
+    if [ -z "$key" ]; then
+        cat >&2 <<EOF
+
+ERROR: Secrets Manager has no entry "$ARGOCD_REPO_SECRET_SM".
+
+  ArgoCD needs a read-only deploy key to read $REPO_URL.
+  Generate one, add the PUBLIC half to the repo's Deploy keys on GitHub
+  (read-only), and store the PRIVATE half:
+
+    ssh-keygen -t ed25519 -N "" -C "argocd-read@asie" -f ./argocd_key
+    aws secretsmanager create-secret --name $ARGOCD_REPO_SECRET_SM \\
+      --secret-string file://argocd_key --region $REGION
+    rm -f ./argocd_key
+
+  Then re-run. Everything before this point is idempotent.
+
+EOF
+        exit 1
+    fi
+
+    # Recreated every run rather than skipped-if-present: the key can rotate in
+    # Secrets Manager, and a stale cluster-side copy would fail authentication
+    # in a way that reads like a revoked key rather than a stale cache.
+    #
+    # The argocd.argoproj.io/secret-type=repository label is what makes ArgoCD
+    # DISCOVER this secret at all. Without it the secret exists, looks correct,
+    # and is silently ignored.
+    # The $'\n' is not cosmetic: $( ) strips every trailing newline, and an
+    # OpenSSH key without its final newline is malformed. Same failure mode as
+    # the CR above, and just as misleading.
+    kubectl -n $ARGOCD_NAMESPACE create secret generic $ARGOCD_REPO_SECRET \
+        --from-literal=type=git \
+        --from-literal=url="$REPO_URL" \
+        --from-literal=sshPrivateKey="${key}"$'\n' \
+        --dry-run=client -o yaml \
+      | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml \
+      | kubectl apply -f - > /dev/null
+
+    echo "Repository credential installed for $REPO_URL."
+}
+
+install_argocd() {
+    step "Installing ArgoCD (the one workload git cannot bootstrap)..."
+    helm repo add argo https://argoproj.github.io/argo-helm > /dev/null 2>&1 || true
+    helm repo update argo > /dev/null
+
+    kubectl create namespace $ARGOCD_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+
+    # Pinned: an unpinned chart means the GitOps controller silently upgrades
+    # itself on the next `up`, which is a migration wearing a sync's clothes.
+    helm upgrade --install argocd argo/argo-cd \
+        --version $ARGOCD_CHART_VERSION \
+        --namespace $ARGOCD_NAMESPACE \
+        -f gitops/bootstrap/argocd-values.yaml \
         --wait --timeout 10m
+}
 
-    step "Applying PrometheusRule and Grafana dashboard..."
-    kubectl apply -f eks/monitoring-rules.yaml
-    kubectl apply -f eks/grafana-dashboard-asie.yaml
+register_root_app() {
+    step "Registering the app-of-apps root Application..."
+    # The only manifest applied by hand. Everything else is a child of this.
+    kubectl apply -f gitops/bootstrap/root-app.yaml
 
-    step "Deploying inference application..."
-    # serviceMonitor.enabled is off by default so the chart installs on a
-    # cluster without the Prometheus Operator; safe to turn on here because
-    # the stack above has just installed the CRD.
-    helm upgrade --install $INFERENCE_RELEASE ./helm/asie-inference \
-        --namespace $INFERENCE_NAMESPACE \
-        --set image.repository=$INFERENCE_ECR_URI \
-        --set image.tag=$DEPLOY_TAG \
-        --set serviceAccount.name=asie-irsa-sa \
-        --set serviceMonitor.enabled=true
-
-    step "Applying the shared ALB Ingress..."
-    kubectl apply -f eks/ingress.yaml
+    step "Waiting for ArgoCD to sync the workloads (this is the deploy)..."
+    # Sync is asynchronous, so `up` would otherwise return before anything is
+    # running and wait_for_alb would look at an Ingress that does not exist.
+    for i in $(seq 1 60); do
+        synced=$(kubectl -n $ARGOCD_NAMESPACE get applications.argoproj.io \
+                 -o jsonpath='{range .items[*]}{.status.sync.status}{"\n"}{end}' 2>/dev/null \
+                 | grep -c "Synced" || true)
+        total=$(kubectl -n $ARGOCD_NAMESPACE get applications.argoproj.io \
+                --no-headers 2>/dev/null | wc -l || echo 0)
+        if [ "$total" -gt 0 ] && [ "$synced" -eq "$total" ]; then
+            echo "All $total Applications synced."
+            break
+        fi
+        echo "  $synced/$total synced; waiting..."
+        sleep 20
+    done
+    kubectl -n $ARGOCD_NAMESPACE get applications.argoproj.io
 }
 
 wait_for_alb() {
@@ -284,7 +466,33 @@ wait_for_alb() {
 # TEAR-DOWN PHASES
 # ---------------------------------------------------------------------------
 
+stop_gitops() {
+    # MUST run before anything below deletes a workload. Every Application sets
+    # selfHeal: true, so a `helm uninstall` while ArgoCD is running is not a
+    # teardown -- it is a drift event, and ArgoCD reinstalls the release within
+    # minutes. The teardown would appear to succeed and leave a running cluster.
+    step "Removing ArgoCD so nothing self-heals during teardown..."
+
+    # Strip the resources-finalizer before deleting. The finalizer makes
+    # Application deletion CASCADE to the workloads it owns, which is right for
+    # normal operation and wrong here: the teardown below is deliberately
+    # ordered -- Ingress first, drained, alone -- and a cascade would delete the
+    # Ingress concurrently with everything else, orphaning the shared ALB and
+    # hanging `terraform destroy` on subnets whose ENIs are still attached.
+    # Orphan the workloads instead and let the ordered teardown do the work.
+    for app in $(kubectl -n $ARGOCD_NAMESPACE get applications.argoproj.io -o name 2>/dev/null); do
+        kubectl -n $ARGOCD_NAMESPACE patch "$app" --type merge \
+            -p '{"metadata":{"finalizers":null}}' > /dev/null 2>&1 || true
+    done
+    kubectl -n $ARGOCD_NAMESPACE delete applications.argoproj.io --all --ignore-not-found > /dev/null 2>&1 || true
+
+    helm uninstall argocd -n $ARGOCD_NAMESPACE > /dev/null 2>&1 || true
+    kubectl delete namespace $ARGOCD_NAMESPACE --ignore-not-found > /dev/null 2>&1 || true
+}
+
 teardown_workloads() {
+    stop_gitops
+
     # The Ingress goes FIRST and on its own. It owns the shared ALB, whose ENIs
     # sit in the VPC subnets -- deleting the namespace out from under it can
     # orphan the load balancer, after which terraform destroy hangs trying to
@@ -318,9 +526,44 @@ destroy_infra() {
     # ECR repos and the S3 bucket are Terraform-owned and carry
     # force_delete/force_destroy, so this completes even when they hold
     # images/objects rather than failing halfway through.
+    # EKS creates its own cluster security group inside the VPC, and it
+    # survives `eksctl delete cluster` -- it is owned by neither eksctl nor
+    # Terraform, so nothing deletes it and it blocks the VPC with
+    #   DependencyViolation: The vpc '...' has dependencies and cannot be
+    #   deleted
+    # after every other resource is gone. Terraform reports a failed destroy
+    # over what is really one stray security group.
+    step "Removing the EKS-managed cluster security group (blocks VPC deletion)..."
+    for sg in $(aws ec2 describe-security-groups --region "$REGION" \
+                  --filters "Name=group-name,Values=eks-cluster-sg-${CLUSTER_NAME}-*" \
+                  --query 'SecurityGroups[].GroupId' --output text 2>/dev/null | tr -d '\r'); do
+        aws ec2 delete-security-group --region "$REGION" --group-id "$sg" > /dev/null 2>&1 \
+            && echo "  deleted $sg" || true
+    done
+
     step "Destroying AWS infrastructure with Terraform..."
     cd aws-provision
-    terraform destroy -auto-approve
+
+    # The provider binaries periodically lose their executable bit on this
+    # Windows/Git-Bash host, and terraform then fails with a misleading
+    # "Failed to load plugin schemas ... Failed to read any lines from plugin's
+    # stdout", which reads like a corrupt download or an architecture mismatch.
+    # The mode is right there in the error (-rw-rw-rw-) and easy to miss.
+    # Cost this teardown one failed run, and an `up` earlier the same day.
+    find .terraform -name "*.exe" -exec chmod +x {} \; 2>/dev/null || true
+
+    # -refresh=false is REQUIRED here, not an optimisation. module.rds reads
+    # the cluster via `data "aws_eks_cluster"`, and `down` deletes the cluster
+    # in the phase before this one -- so refreshing fails with
+    #   Error: reading EKS Cluster (asie-cluster): couldn't find resource
+    # and destroy aborts having removed nothing. That made `down` unable to
+    # complete at all; it went unnoticed because a full teardown had never
+    # been run end to end until 2026-08-14.
+    #
+    # Skipping refresh is safe precisely here: everything in state was created
+    # by this configuration and is about to be destroyed, so a stale read
+    # changes nothing about what gets deleted.
+    terraform destroy -auto-approve -refresh=false
     cd ..
 
     # These were created with `aws iam create-policy` / eksctl --role-only, so
@@ -340,6 +583,31 @@ destroy_infra() {
         --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy 2>/dev/null || true
     aws iam delete-role --role-name AmazonEKS_EBS_CSI_DriverRole_asie 2>/dev/null \
         && echo "  deleted AmazonEKS_EBS_CSI_DriverRole_asie" || true
+
+    # The deploy keys, created with `aws secretsmanager create-secret` during
+    # the GitOps week and owned by neither Terraform nor eksctl. Left behind
+    # they bill ~$0.40/secret/month indefinitely -- small enough to go
+    # unnoticed on a credit-funded account and to start charging a card the
+    # moment those credits lapse.
+    #
+    # --force-delete-without-recovery, not the default 30-day window: a
+    # teardown that leaves resources scheduled for deletion has not finished,
+    # and the private keys are regenerable in seconds. Recovery would only
+    # matter if the key were the irreplaceable thing, and it is not -- the
+    # GitHub side has to be re-registered either way.
+    step "Removing GitOps deploy keys from Secrets Manager..."
+    for s in "$ARGOCD_REPO_SECRET_SM" "$AIRFLOW_REPO_SECRET_SM"; do
+        aws secretsmanager delete-secret --secret-id "$s" --region "$REGION" \
+            --force-delete-without-recovery > /dev/null 2>&1 \
+            && echo "  deleted $s" || true
+    done
+
+    cat <<EOF
+
+NOTE: the GitHub deploy keys are now orphaned -- their private halves are gone
+but the public halves remain registered on the repo. Remove them under
+Settings > Deploy keys; nothing here can do that for you.
+EOF
 }
 
 confirm_destroy() {
@@ -393,15 +661,18 @@ usage() {
     cat <<EOF
 Usage: ./asie.sh <command>
 
-  up       Provision infrastructure, build and push images, deploy everything.
-           Safe to re-run; every step is idempotent.
+  up       Provision infrastructure, build and push images, install ArgoCD and
+           hand off. ArgoCD deploys the workloads from gitops/ -- this script
+           no longer decides what runs. Safe to re-run; every step is
+           idempotent.
 
   pause    Delete the EKS cluster and workloads. KEEPS S3, ECR, RDS and the
            VPC, so no data is lost. Removes most of the hourly cost (the
            nodes and the control plane); NAT gateway and RDS keep running.
 
-  resume   Rebuild the cluster and redeploy on top of the surviving data.
-           Skips Terraform and the image build, since neither was torn down.
+  resume   Rebuild the cluster on top of the surviving data and re-register
+           ArgoCD, which redeploys from git. Skips Terraform and the image
+           build, since neither was torn down.
 
   down     Destroy EVERYTHING, including all data in S3 and RDS.
            Irreversible. Asks for confirmation first.
@@ -419,12 +690,16 @@ case "$1" in
         provision_infra
         create_cluster
         cluster_addons
+        install_alb_controller
         ensure_namespaces
         create_irsa
         bootstrap_db
         upload_models
         build_push_images
-        deploy_workloads
+        bootstrap_secrets
+        install_argocd
+        ensure_repo_credential
+        register_root_app
         wait_for_alb
         echo ""
         echo "Setup complete."
@@ -454,10 +729,14 @@ EOF
         # No upload_models / build_push_images: S3 and ECR survived the pause.
         create_cluster
         cluster_addons
+        install_alb_controller
         ensure_namespaces
         create_irsa
         bootstrap_db
-        deploy_workloads
+        bootstrap_secrets
+        install_argocd
+        ensure_repo_credential
+        register_root_app
         wait_for_alb
         echo ""
         echo "Resume complete."

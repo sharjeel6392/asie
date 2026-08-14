@@ -1,0 +1,84 @@
+{{- if .Values.canary.enabled }}
+# Progressive delivery for the inference service.
+#
+# What this adds over the rolling update it replaces: a rolling update swaps
+# pods as fast as they become Ready and has no opinion about whether the new
+# version is any good. A canary holds a fraction of traffic on the new version,
+# measures it, and aborts on its own if the numbers are bad.
+#
+# Note this is NOT the same safety net as shadow mode, and does not replace it.
+# Shadow runs the candidate on 100% of traffic with 0% blast radius, but its
+# output is only ever logged -- it proves correctness, never exposure. The
+# canary is the reverse: real users receive real responses from the new
+# version, so it is the only thing that tests the deploy itself.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  # Keep the previous ReplicaSet's spec so `kubectl argo rollouts undo` can
+  # restore it without a git round-trip. Git remains the source of truth --
+  # this is the break-glass path for when a human needs the old version back
+  # in seconds, and any such intervention must still be reconciled into git
+  # afterwards or ArgoCD's selfHeal will undo the undo.
+  revisionHistoryLimit: 3
+  # Skip the canary steps when returning to a recently-stable revision.
+  #
+  # Found by running an actual rollback: without this, reverting to the
+  # previous version goes through the same 20% -> analyse -> 50% -> analyse
+  # ladder as a forward deploy. That is precisely backwards during an incident
+  # -- the version you are escaping keeps serving 80% then 50% of traffic for
+  # ten minutes while the KNOWN-GOOD version is cautiously canaried. Gradual
+  # exposure exists to limit the blast radius of something unproven; a revision
+  # that was serving healthily minutes ago is the opposite of unproven.
+  #
+  # Bounded to the last 3 revisions rather than unlimited: "was stable once" is
+  # not the same claim as "was stable recently", and an old revision deserves
+  # the full ladder like any other unproven change.
+  rollbackWindow:
+    revisions: {{ .Values.canary.rollbackWindowRevisions }}
+  strategy:
+    canary:
+      canaryService: {{ .Release.Name }}-canary
+      stableService: {{ .Release.Name }}-stable
+      trafficRouting:
+        alb:
+          # The Ingress whose target-group weights the controller rewrites to
+          # shift traffic. It must forward to rootService, not directly to a
+          # backend -- Rollouts replaces that backend with a weighted
+          # forward action across the canary and stable services.
+          ingress: {{ .Values.canary.ingressName }}
+          rootService: {{ .Release.Name }}
+          servicePort: {{ .Values.service.port }}
+      steps:
+        {{- range .Values.canary.steps }}
+        {{- if .setWeight }}
+        - setWeight: {{ .setWeight }}
+        {{- end }}
+        {{- if .pause }}
+        - pause: {{ toYaml .pause | nindent 12 }}
+        {{- end }}
+        {{- if .analysis }}
+        - analysis:
+            templates:
+              - templateName: {{ $.Release.Name }}-success-rate
+            args:
+              # Passes the new ReplicaSet's pod-template-hash into the query so
+              # the analysis measures the CANARY only. Without it the query
+              # blends both versions, and a canary failing every request at a
+              # 20% weight moves the overall error rate by 20% -- comfortably
+              # under any threshold worth setting.
+              - name: canary-hash
+                valueFrom:
+                  podTemplateHashValue: Latest
+        {{- end }}
+        {{- end }}
+  template:
+{{ include "asie-inference.podTemplate" . | indent 4 }}
+{{- end }}

@@ -12,6 +12,12 @@ data:
   INFERENCE_DEVICE: "cpu"
   APP_ENV: "development"
 
+  # Read by the initContainer (which S3 prefixes to fetch) AND by the app
+  # (which version to record on every inference_logs row). One value, so the
+  # weights on disk and the version in the database cannot disagree.
+  PRIMARY_MODEL_VERSION: {{ .Values.model.primaryVersion | quote }}
+  SHADOW_MODEL_VERSION: {{ .Values.model.shadowVersion | quote }}
+
   MODEL_S3_URI: {{ .Values.models.s3Uri | quote }}
   AWS_REGION: {{ .Values.aws.region | quote }}
   AWS_DEFAULT_REGION: {{ .Values.aws.region | quote }}

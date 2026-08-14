@@ -1,0 +1,78 @@
+# Cluster-specific values for helm/asie-inference, replacing the `--set` flags
+# that asie.sh's deploy_workloads() passed. The chart's own values.yaml stays
+# as the neutral default so the chart still installs on a bare cluster.
+#
+# Image tags are per-chart files, not one shared file: MLflow's chart and this
+# one both key off `image.repository`, so a single shared tags file would point
+# MLflow at the inference image.
+
+# THE DEPLOY LEVER for inference.
+#
+# Replaces asie.sh's resolve_image_tag(), which queried ECR at deploy time and
+# fell back to :latest when the SHA tag was missing. That fallback was forced
+# by the imperative design -- `resume` doesn't build, so $GIT_SHA could name a
+# tag that was never pushed -- but it meant the deployed version was a runtime
+# discovery rather than a recorded fact. Here it is recorded: a deploy is a
+# commit to this line, and a rollback is `git revert`.
+image:
+  repository: 818111885210.dkr.ecr.ap-south-1.amazonaws.com/asie-inference-repo
+  tag: latest
+
+serviceAccount:
+  # Created by asie.sh create_irsa(), not by this chart -- the chart has no
+  # ServiceAccount template at all, it only references the name. That is
+  # deliberate: the account carries an IAM role ARN annotation derived from
+  # Terraform output, and a Helm-created one would lack it. The initContainer's
+  # `aws s3 sync` would then fail with AccessDenied, surfacing as a pod stuck
+  # in Init rather than as anything that reads like a permissions problem.
+  #
+  # Consequence worth knowing: this is the one piece of the inference
+  # deployment that is NOT reconciled from git. See §1.2 "bootstrap" in
+  # GITOPS_AND_OPTIMIZATION_PLAN.md.
+  name: asie-irsa-sa
+
+serviceMonitor:
+  # Safe to enable unconditionally here: sync-wave 2 guarantees
+  # kube-prometheus-stack (wave 1) has already installed the CRD.
+  enabled: true
+
+# THE MODEL DEPLOY LEVER. Each value is an MLflow run_id and the S3 prefix
+# under models/ holding those weights.
+#
+# This is the fix for the gap in DEPLOYMENT_ARCHITECTURE.md §1: the model lives
+# in S3 and is fetched by the initContainer at pod startup, so replacing it in
+# S3 changes nothing for pods already running. Writing the version here changes
+# the POD TEMPLATE, which is what forces a rolling update.
+#
+# Promotion is: shadowVersion is proven by the online gate, then copied into
+# primaryVersion and committed. Rollback is `git revert` of that commit — which
+# works only because exports are keyed by run_id and never overwritten (§6.1).
+#
+# "unset" until the first real export runs under the versioned layout; the
+# initContainer will fail loudly on a nonexistent prefix rather than silently
+# serving whatever happened to be in the bucket.
+model:
+  # Migrated 2026-08-14 from the old fixed models/primary + models/shadow
+  # prefixes, which were copied to these run_id-keyed ones. Left "unset" these
+  # would have pointed the initContainer at a nonexistent s3://.../models/unset/
+  # and every inference pod would have failed at Init on first sync.
+  primaryVersion: "286aecc660884060ac72f46ce3c4ab29"   # eval_f1 0.9715
+  # Note this shadow scores HIGHER offline than primary (0.9824 vs 0.9715), so
+  # it is a live promotion candidate the moment the gate has enough online
+  # evidence. Exactly the case Day 2's policy exists to decide.
+  shadowVersion: "286aecc660884060ac72f46ce3c4ab29"    # eval_f1 0.9824
+
+# Forces a pod-template change so a rollout can be observed without touching
+# the model version. Bump the value to re-run the zero-downtime verification.
+podAnnotations:
+  asie.io/rollout-test: "1"
+
+# Progressive delivery. Deliberately still FALSE: the Rollout, its ALB traffic
+# routing and the Prometheus analysis query have all been rendered and parsed
+# but never run against a cluster. Enabling them blind on the next `up` risks
+# an inference service that never becomes available at all -- a Rollout that
+# fails to progress serves nothing, which is a worse failure than an extra
+# step. Flipping this to true is itself the Day 5 verification, done as a
+# watched one-line commit with the cluster in front of me.
+canary:
+  enabled: true

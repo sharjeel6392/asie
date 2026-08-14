@@ -1,0 +1,34 @@
+# Wave 2 -- after kube-prometheus-stack (ServiceMonitor CRD, see 11-*.yaml).
+#
+# This is the Application that closes the retraining loop. Everything that
+# asie.sh passed as `--set` now lives in gitops/values/, so a deploy is a
+# commit and a rollback is a revert.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: asie-inference
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:sharjeel6392/asie.git
+    targetRevision: gitops-deployment
+    path: helm/asie-inference
+    helm:
+      # Release name pinned to "asie", matching INFERENCE_RELEASE in asie.sh.
+      # Changing it would orphan the existing release's resources rather than
+      # adopt them -- ArgoCD would create a parallel set alongside.
+      releaseName: asie
+      valueFiles:
+        - ../../gitops/values/inference.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: asie-inference
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

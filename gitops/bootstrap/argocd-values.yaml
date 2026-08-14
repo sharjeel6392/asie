@@ -1,0 +1,66 @@
+# Helm values for the argo-cd chart (argoproj/argo-cd).
+#
+# ArgoCD is the one workload that CANNOT manage itself into existence -- the
+# bootstrap paradox. asie.sh installs this chart imperatively, then applies
+# root-app.yaml, and from that point on git is the source of truth for
+# everything else. ArgoCD does subsequently manage its own config, via the
+# app-of-apps, so changes here still flow through git after the first install.
+
+global:
+  # Single-replica everything. This cluster runs 2-3 nodes; an HA ArgoCD wants
+  # 3 redis replicas + 2 of each controller and would consume a meaningful
+  # fraction of the cluster to protect a component whose outage is not
+  # customer-visible -- if ArgoCD is down, running workloads keep serving.
+  domain: argocd.asie.internal
+
+configs:
+  params:
+    # Terminate TLS at the ALB, not in argocd-server. Without this the server
+    # serves HTTPS on 8080 and the ALB (which health-checks over HTTP) marks
+    # every target unhealthy -- the same failure mode that a plain HTTP
+    # backend behind an HTTPS-expecting LB produces, just inverted.
+    server.insecure: true
+
+  cm:
+    # Required for the ALB path-based routing below: ArgoCD generates absolute
+    # URLs for its UI assets and OAuth callbacks, and gets them wrong when it
+    # is served from a sub-path it does not know about.
+    url: http://argocd.asie.internal
+
+controller:
+  replicas: 1
+
+repoServer:
+  # The repo-server renders Helm charts. It holds the whole repo plus rendered
+  # output in memory; the default 64Mi request is under-sized for a repo that
+  # carries chart dependencies, and OOMKills there surface confusingly as
+  # "ComparisonError" on the Application rather than as a pod crash.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+server:
+  replicas: 1
+  service:
+    # ClusterIP for the same reason as the inference chart: eks/ingress.yaml
+    # puts everything behind the ONE shared ALB (AWS_ARCHITECTURE.md §6).
+    # LoadBalancer here would silently provision a second billed ELB.
+    type: ClusterIP
+
+dex:
+  # No SSO. Single-operator project; local admin auth only. Dex is an
+  # additional pod doing nothing.
+  enabled: false
+
+notifications:
+  # Off for now. Slack/webhook notification on sync failure is worth adding
+  # during Week 14 hardening, not while the pipeline is still being built.
+  enabled: false
+
+applicationSet:
+  # Not needed yet -- app-of-apps covers a fixed set of five workloads.
+  # ApplicationSet earns its place with per-environment or per-PR generation.
+  enabled: false

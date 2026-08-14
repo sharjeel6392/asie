@@ -41,6 +41,20 @@ aws:
 models:
   s3Uri: "asie-platform-818111885210/models"
 
+# Deployed model versions. Each is an MLflow run_id, which is also the S3
+# prefix under models/ holding that model's weights -- one identifier from
+# training through to the inference_logs row.
+#
+# Two jobs at once: the initContainer fetches exactly these prefixes, and both
+# are stamped onto the pod template as annotations so changing either forces a
+# rolling update (see templates/deployment.yaml). Overridden by
+# gitops/values/inference.yaml; defaults keep the chart renderable standalone.
+model:
+  primaryVersion: "unset"
+  # Empty or "unset" disables shadow inference entirely -- the app already
+  # treats a missing shadow model as optional.
+  shadowVersion: "unset"
+
 # Secret (created by eks/db-bootstrap/create-app-secrets.sh) holding the
 # Postgres connection string for asie_app.
 database:
@@ -69,6 +83,44 @@ initContainer:
   # "not found", stranding the pod in Init:ImagePullBackOff), and public.ecr.aws
   # has no anonymous pull rate limit, unlike Docker Hub.
   image: "public.ecr.aws/aws-cli/aws-cli:latest"
+
+# Progressive delivery. Off by default so the chart still installs as a plain
+# Deployment on a cluster without the Argo Rollouts CRDs; gitops/values turns
+# it on where the controller exists.
+canary:
+  enabled: false
+  # The ALB Ingress whose target-group weights the controller rewrites. Lives
+  # in eks/ingress.yaml, outside this chart.
+  ingressName: asie-inference
+  # How many recent revisions count as "known good" for a fast-tracked
+  # rollback. Returning to one of these skips the canary ladder entirely.
+  rollbackWindowRevisions: 3
+  # Traffic weight ladder. 20 -> 50 -> 100, with an analysis gate after each
+  # increase rather than a fixed pause: a timer only proves that time passed.
+  steps:
+    - setWeight: 20
+    - analysis: true
+    - setWeight: 50
+    - analysis: true
+  analysis:
+    prometheusAddress: http://kube-prom-prometheus.monitoring.svc.cluster.local:9090
+    # Rate window. 2m against a 30s scrape gives four samples -- enough that
+    # one slow scrape does not swing the ratio.
+    window: 2m
+    initialDelay: 60s
+    interval: 60s
+    count: 3
+    # 0.99, not 1.0. Demanding a perfect success rate makes any single 5xx
+    # from an unrelated cause abort the rollout, and this endpoint returns 422
+    # for malformed input by design -- those are 4xx and already excluded, but
+    # the margin matters for genuine transients.
+    minSuccessRate: 0.99
+
+# Drain window before the container stops, in seconds. Sized against the ALB's
+# target deregistration, not against application shutdown: the app has nothing
+# to flush, but the load balancer keeps routing to a deregistering target for a
+# few seconds. 20s covers the observed window with margin.
+preStopDelaySeconds: 20
 
 # This is for setting Kubernetes Annotations to a Pod.
 # For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/

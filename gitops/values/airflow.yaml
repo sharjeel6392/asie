@@ -1,0 +1,14 @@
+# Image tag override for the upstream apache-airflow/airflow chart, layered on
+# top of eks/airflow-values.yaml (which holds the real configuration: executor,
+# RDS connection, DAG env, IRSA account).
+#
+# Kept separate from eks/airflow-values.yaml so the deploy lever is one line in
+# one place per workload, rather than buried in a 100-line values file.
+images:
+  airflow:
+    repository: 818111885210.dkr.ecr.ap-south-1.amazonaws.com/asie-airflow-repo
+    # Pinned to the commit that added the rollback/values-writer modules and
+    # the auto-rollback DAG. "latest" is mutable, so a rebuilt image under the
+    # same tag leaves the pod spec unchanged and Kubernetes never rolls it --
+    # the new code would sit in ECR while the old pods kept running.
+    tag: 218b148

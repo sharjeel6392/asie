@@ -2,6 +2,15 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: asie-inference
+  labels:
+    # Makes the AWS Load Balancer Controller inject a readiness gate into every
+    # pod here, so a pod is not considered Ready until the ALB has actually
+    # REGISTERED it as a healthy target. Without it, Kubernetes calls a pod
+    # Ready the moment its probe passes and immediately starts draining the old
+    # one, while the ALB is still catching up -- the other half of the 502
+    # observed at cutover. The preStop hook covers deregistration; this covers
+    # registration.
+    elbv2.k8s.aws/pod-readiness-gate-inject: enabled
 ---
 apiVersion: v1
 kind: Namespace

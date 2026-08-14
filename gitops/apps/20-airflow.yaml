@@ -1,0 +1,50 @@
+# Wave 2 -- after MLflow (Service DNS dependency, see 10-mlflow.yaml).
+#
+# Image tag: eks/airflow-values.yaml carries the repository, and the tag is
+# overridden from gitops/values/image-tags.yaml so a rebuild is a commit.
+# Chart version pinned to 1.16.0, matching what asie.sh deployed and verified
+# -- an unpinned targetRevision means ArgoCD silently upgrades Airflow the next
+# time the chart publishes, which is a migration, not a sync.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: airflow
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://airflow.apache.org
+      chart: airflow
+      targetRevision: 1.16.0
+      helm:
+        releaseName: airflow
+        valueFiles:
+          - $values/eks/airflow-values.yaml
+          - $values/gitops/values/airflow.yaml
+    - repoURL: git@github.com:sharjeel6392/asie.git
+      targetRevision: gitops-deployment
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: airflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    # retry belongs INSIDE syncPolicy. As a sibling of it (spec.retry) the
+    # field does not exist, so the API server prunes it: the policy silently
+    # never applied, AND the pruned field showed as permanent drift against
+    # git, leaving the app-of-apps root OutOfSync forever. With selfHeal on,
+    # that is a standing re-sync loop over a difference that can never close.
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

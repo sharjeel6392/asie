@@ -1,0 +1,37 @@
+# Wave 0 -- everything else installs into these.
+#
+# Kept pointing at the existing eks/namespaces.yaml rather than copied into
+# gitops/: one definition, so a namespace added for a local docker-compose or
+# kind run can't drift from what the cluster actually has.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: namespaces
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:sharjeel6392/asie.git
+    targetRevision: gitops-deployment
+    path: eks
+    directory:
+      recurse: false
+      # eks/ holds a dozen files that are NOT cluster manifests (values files,
+      # eksctl configs, shell scripts). Including them would make ArgoCD try to
+      # apply an eksctl ClusterConfig as a Kubernetes object and fail the whole
+      # Application. Only namespaces.yaml is claimed here.
+      include: "namespaces.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      # prune deliberately OFF. A namespace prune cascades to every object
+      # inside it, including the RDS-credential Secrets that db-bootstrap
+      # created imperatively. Too destructive for a resource that is created
+      # once and never changes.
+      prune: false
+      selfHeal: true

@@ -1,0 +1,11 @@
+# Cluster values for helm/asie-mlflow. That chart's own values.yaml already
+# carries every cluster-specific setting (ECR repository, IRSA account, S3
+# artifact root, allowedHosts), so the only thing asie.sh overrode at deploy
+# time was the tag.
+#
+# Separate from gitops/values/inference.yaml on purpose: both charts key off
+# `image.repository`, so a shared tags file would point one at the other's
+# image.
+image:
+  repository: 818111885210.dkr.ecr.ap-south-1.amazonaws.com/asie-mlflow-repo
+  tag: latest

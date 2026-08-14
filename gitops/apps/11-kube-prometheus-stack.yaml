@@ -1,0 +1,67 @@
+# Wave 1 -- must precede the inference chart, which renders a ServiceMonitor.
+# This chart owns that CRD; syncing inference first fails with "no matches for
+# kind ServiceMonitor", which is why asie.sh gated serviceMonitor.enabled
+# behind the install order. Sync waves express that constraint on the object
+# that has it, instead of burying it in the line order of a shell function.
+#
+# Multi-source: the chart comes from the prometheus-community Helm repo, the
+# values from this git repo. `ref: values` is what makes $values resolve.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      # 88.3.0 -- matches what asie.sh actually installed and what is running
+      # in the cluster (helm list). This was pinned at 65.1.1 from an offline
+      # guess: syncing that would have DOWNGRADED Prometheus, Grafana and the
+      # operator CRDs by 23 major chart versions, which is a data-losing
+      # migration dressed up as a first sync. Verify against `helm list -A`
+      # before changing.
+      targetRevision: 88.3.0
+      helm:
+        releaseName: kube-prometheus-stack
+        valueFiles:
+          - $values/eks/monitoring-values.yaml
+    - repoURL: git@github.com:sharjeel6392/asie.git
+      targetRevision: gitops-deployment
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The Prometheus Operator CRDs exceed the 262144-byte limit that
+      # kubectl's client-side apply enforces via the last-applied-configuration
+      # annotation. Without ServerSideApply the sync fails outright on
+      # prometheuses.monitoring.coreos.com. This is the single most common
+      # kube-prometheus-stack-under-ArgoCD failure.
+      - ServerSideApply=true
+      # The chart's CRDs are large and slow; give the initial sync room rather
+      # than letting a 5-minute default mark a healthy install as degraded.
+      - Replace=false
+    # CRD establishment plus Prometheus StatefulSet startup routinely exceeds a
+    # single sync attempt on a small cluster. Retry rather than surfacing a red
+    # Application that is actually just still coming up.
+    #
+    # Nested inside syncPolicy, not beside it: spec.retry is not a field on the
+    # Application CRD, so the API server prunes it -- the policy never applies
+    # and the pruned field reads as permanent drift from git, holding the
+    # app-of-apps root OutOfSync forever.
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

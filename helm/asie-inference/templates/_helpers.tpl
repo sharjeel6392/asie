@@ -1,0 +1,140 @@
+{{/*
+The pod template, shared by the Deployment and the Rollout.
+
+Extracted rather than duplicated. Canary delivery replaces the Deployment with
+a Rollout, and the two carry an identical pod spec -- a ~110-line spec covering
+the model-fetch initContainer, the drain hook and three probes. Two copies of
+that would drift the first time one is edited, and the failure would be
+invisible: whichever workload type is not currently enabled simply carries
+stale config until someone flips the flag.
+*/}}
+{{- define "asie-inference.podTemplate" -}}
+metadata:
+  labels:
+    app: {{ .Release.Name }}
+  annotations:
+    # The model artifact lives in S3 and is pulled by the initContainer at
+    # pod startup, so replacing it in S3 does NOT restart anything that is
+    # already running -- a retrained model would sit in the bucket while
+    # every pod kept serving the old weights. Stamping the promoted version
+    # onto the pod template changes the pod spec, which is what actually
+    # triggers a rollout. The promotion step writes this value.
+    asie.io/primary-model-version: {{ .Values.model.primaryVersion | quote }}
+    asie.io/shadow-model-version: {{ .Values.model.shadowVersion | quote }}
+    {{- with .Values.podAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  serviceAccountName: {{ .Values.serviceAccount.name }}
+  # Must exceed preStopDelaySeconds, or the kubelet SIGKILLs the container
+  # partway through the drain the preStop hook exists to provide.
+  terminationGracePeriodSeconds: {{ add .Values.preStopDelaySeconds 25 }}
+  initContainers:
+  - name: fetch-models
+    image: {{ .Values.initContainer.image }}
+    # IRSA on the pod's service account applies to init containers too --
+    # no separate credential wiring needed here.
+    # Fetch exactly the two versions this pod is meant to run, not the
+    # whole models/ bucket prefix. Since exports are keyed by run_id and
+    # append-only, syncing everything would grow with every retrain ever
+    # performed -- and would defeat rollback, because the pod would no
+    # longer be pinned to specific content.
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        set -e
+        echo "Fetching primary model: $PRIMARY_MODEL_VERSION"
+        aws s3 sync "s3://$MODEL_S3_URI/$PRIMARY_MODEL_VERSION/" /models/primary/ --only-show-errors
+        if [ -z "$SHADOW_MODEL_VERSION" ] || [ "$SHADOW_MODEL_VERSION" = "unset" ]; then
+          echo "No shadow version set; skipping (shadow inference is optional)."
+        elif [ "$SHADOW_MODEL_VERSION" = "$PRIMARY_MODEL_VERSION" ]; then
+          # Bootstrap case: register_shadow_model() seeds primary from the
+          # first shadow, so both point at one run. Copy locally rather
+          # than paying a second ~250 MB download for identical bytes.
+          echo "Shadow == primary; copying locally."
+          cp -r /models/primary /models/shadow
+        else
+          echo "Fetching shadow model: $SHADOW_MODEL_VERSION"
+          aws s3 sync "s3://$MODEL_S3_URI/$SHADOW_MODEL_VERSION/" /models/shadow/ --only-show-errors
+        fi
+    envFrom:
+    - configMapRef:
+        name: {{ .Release.Name }}
+    volumeMounts:
+    - name: models
+      mountPath: /models
+  containers:
+  - name: "{{ .Release.Name }}-container"
+    image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+    imagePullPolicy: IfNotPresent
+    envFrom:
+    - configMapRef:
+        name: {{ .Release.Name }}
+    env:
+    - name: ASIE_DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: {{ .Values.database.secretName }}
+          key: {{ .Values.database.secretKey }}
+    ports:
+    # Named so the Service can target it by name (targetPort: http),
+    # which is what lets the ServiceMonitor reference it.
+    - name: http
+      containerPort: 8000
+    volumeMounts:
+    - name: models
+      mountPath: /models
+    {{- with .Values.volumeMounts }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    # Measured, not precautionary: a rolling update produced exactly one
+    # 502 out of 145 polled requests, landing at the moment of cutover.
+    #
+    # maxUnavailable floors to 0 at one replica, so the new pod is Ready
+    # before the old one is told to stop -- but Kubernetes and the ALB
+    # deregister independently. The kubelet terminates the old pod
+    # immediately while its IP is still a registered target, and the ALB
+    # keeps sending to it for the few seconds deregistration takes. The
+    # sleep keeps the container serving through that window; it does not
+    # delay the new pod, which is already taking traffic.
+    lifecycle:
+      preStop:
+        exec:
+          command: ["/bin/sh", "-c", "sleep {{ .Values.preStopDelaySeconds }}"]
+    resources:
+      requests:
+        memory: {{ .Values.resources.requests.memory }}
+        cpu: {{ .Values.resources.requests.cpu }}
+      limits:
+        memory: {{ .Values.resources.limits.memory }}
+        cpu: {{ .Values.resources.limits.cpu }}
+    # Model load into RAM after a cold start can take longer than the
+    # liveness probe's initialDelaySeconds below -- startupProbe holds
+    # off liveness checks (up to 30x10s=300s) until the app is actually
+    # ready, so a slow-but-healthy start doesn't get killed as if hung.
+    startupProbe:
+      httpGet:
+        path: {{ .Values.readinessProbe.httpGet.path }}
+        port: {{ .Values.readinessProbe.httpGet.port }}
+      failureThreshold: 30
+      periodSeconds: 10
+    readinessProbe:
+      httpGet:
+        path: {{ .Values.readinessProbe.httpGet.path }}
+        port: {{ .Values.readinessProbe.httpGet.port }}
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    livenessProbe:
+      httpGet:
+        path: {{ .Values.livenessProbe.httpGet.path }}
+        port: {{ .Values.livenessProbe.httpGet.port }}
+      initialDelaySeconds: 15
+      periodSeconds: 10
+  volumes:
+  - name: models
+    emptyDir:
+      sizeLimit: 2Gi
+  {{- with .Values.volumes }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+{{- end -}}

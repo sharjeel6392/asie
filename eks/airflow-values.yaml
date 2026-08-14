@@ -97,6 +97,46 @@ env:
   - name: S3_BUCKET
     value: "asie-platform-818111885210"
 
+  # GitOps write path. Airflow is the only workload that COMMITS to the repo:
+  # the retraining pipeline deploys a new candidate as shadow, and the
+  # auto-rollback DAG reverts a failing primary. Both go through
+  # src/gitops/values_writer.py.
+  #
+  # SSH form, matching the deploy key. Must equal the repoURL in gitops/apps/*
+  # or ArgoCD and this would be writing to and reading from different places.
+  - name: ASIE_GITOPS_REPO_URL
+    value: "git@github.com:sharjeel6392/asie.git"
+  - name: ASIE_GITOPS_BRANCH
+    value: "gitops-deployment"
+  - name: ASIE_GITOPS_SSH_KEY
+    value: "/etc/asie-gitops/ssh-privatekey"
+  - name: ASIE_PROMETHEUS_URL
+    value: "http://kube-prom-prometheus.monitoring.svc.cluster.local:9090"
+
+# Mounts the WRITE-scoped deploy key. Deliberately a different key from the one
+# ArgoCD reads with: ArgoCD needs read only, and keeping them separate means a
+# compromised ArgoCD cannot rewrite desired state. The reverse exposure is real
+# and unavoidable -- deploy keys cannot be path-scoped, so a compromised Airflow
+# can commit anything to this branch. Only branch protection requiring review
+# would close that, at the cost of unattended promotion.
+#
+# Secret `asie-gitops-write` must exist in the airflow namespace with key
+# ssh-privatekey. Created from Secrets Manager (asie/airflow-repo-write), not
+# committed here.
+volumes:
+  - name: asie-gitops-key
+    secret:
+      secretName: asie-gitops-write
+      # 0400: ssh refuses to use a private key others can read, and the failure
+      # ("UNPROTECTED PRIVATE KEY FILE") looks nothing like a permissions
+      # problem in an Airflow task log.
+      defaultMode: 256
+
+volumeMounts:
+  - name: asie-gitops-key
+    mountPath: /etc/asie-gitops
+    readOnly: true
+
 # asie_app (not airflow_db — the DAG's drift-check/retraining code reads
 # ASIE_DATABASE_URL via src.db.engine, a different database than Airflow's
 # own metadata DB).

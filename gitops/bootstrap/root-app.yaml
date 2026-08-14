@@ -1,0 +1,39 @@
+# The app-of-apps root.
+#
+# This is the ONLY Application applied by hand (by asie.sh, right after the
+# ArgoCD chart install). It watches gitops/apps/ and creates one child
+# Application per workload. After this, adding a workload to the cluster means
+# adding a file to gitops/apps/ and pushing -- no kubectl, no helm.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: asie-root
+  namespace: argocd
+  # Without this finalizer, deleting the root Application orphans every child
+  # Application and the workloads they own: they keep running with nothing
+  # managing them, invisible to ArgoCD. The finalizer makes deletion cascade.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:sharjeel6392/asie.git
+    # Every Application under gitops/apps/ tracks this same branch -- keep them
+    # in step. TODO: flip all of them to `main` once gitops-deployment merges
+    # (it branches off aws-migration, which is itself unmerged). Pointing this
+    # at main today would sync an empty gitops/ tree, and ArgoCD would
+    # dutifully prune every workload it manages.
+    targetRevision: gitops-deployment
+    path: gitops/apps
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      # prune: a child Application deleted from git is deleted from the
+      # cluster. selfHeal: a child edited live is reverted. Both are the point
+      # of the exercise -- without them this is just a slower `helm install`.
+      prune: true
+      selfHeal: true

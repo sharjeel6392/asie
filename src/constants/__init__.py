@@ -42,9 +42,19 @@ PRIMARY_MODEL_ROLE = "primary"
 SHADOW_MODEL_ROLE = "shadow"
 PROMOTED_MODEL_STATE = "promoted"
 MODEL_CLASS_NAME = "DistilBertForSequenceClassification"
-PRIMARY_MODEL_VERSION = "v_01"
-SHADOW_MODEL_VERSION = "v_02"
-SERVED_MODEL_VERSION = "v0"
+
+# Fallbacks only. The real versions come from the pod environment
+# (Settings.PRIMARY_MODEL_VERSION / SHADOW_MODEL_VERSION), fed by
+# gitops/values/inference.yaml through the chart's ConfigMap.
+#
+# These used to be the literals written into every inference_logs row, which
+# made rows from different shadow models indistinguishable -- and the online
+# promotion gate has to evaluate ONE specific shadow model over its own live
+# window. Computing that over a mixture of models is silently wrong, not
+# merely imprecise. "unset" is deliberately not a plausible version string:
+# if it shows up in the table, the env wiring is broken and it should be
+# obvious rather than looking like real data.
+DEFAULT_MODEL_VERSION = "unset"
 REQUEST_SOURCE_API = "api"
 MAX_BATCH_SIZE = 32
 
@@ -111,6 +121,36 @@ DRIFT_UPDATED_METRIC_DESCRIPTION = (
     "worker stops. This is what a staleness alert watches."
 )
 DRIFT_THRESHOLD = 0.5  # matches Prometheus DriftWarning (prometheus/alerts.yml)
+
+# Automated rollback thresholds — DEPLOYMENT_ARCHITECTURE.md §5, Layer 2.
+ROLLBACK_ERROR_RATE_THRESHOLD = 0.05   # 5% of /predict returning 5xx
+ROLLBACK_MIN_REQUESTS = 0.05           # req/s floor; below this the ratio is
+                                       # noise and every quiet period would
+                                       # look like an outage
+ROLLBACK_MAX_AGE_HOURS = 6.0           # only roll back changes that are still
+                                       # recent. A model healthy for days that
+                                       # suddenly errors is far more likely a
+                                       # platform failure than a model defect,
+                                       # and a rollback would not fix it -- it
+                                       # would just add a deploy to an incident
+
+# Promotion gate thresholds — DEPLOYMENT_ARCHITECTURE.md §4.
+# The online gate can only establish that a candidate is SAFE; "better" is
+# decided offline by eval_f1, because true_label is NULL on every production
+# row and there is no ground truth to score against live.
+PROMOTION_MIN_SAMPLES = 1000        # below this the rates below are noise
+PROMOTION_MIN_SOAK_HOURS = 24.0     # 1000 samples can arrive in one traffic
+                                    # spike; a wall-clock floor is what makes
+                                    # the window representative rather than
+                                    # merely large
+PROMOTION_MAX_SHADOW_FAILURE_RATE = 0.01   # shadow errors land as NULL
+                                           # predictions, so this is a real
+                                           # error rate, not a proxy
+PROMOTION_LATENCY_RATIO_LIMIT = 1.25       # shadow p95 vs primary p95; a
+                                           # slower-but-better model still
+                                           # breaks the serving SLO
+PROMOTION_DISAGREEMENT_REVIEW_RATE = 0.30  # NOT a correctness threshold —
+                                           # above this, hold for human review
 DEFAULT_DRIFT_WINDOW_HOURS = 24
 DEFAULT_CLI_DRIFT_WINDOW_HOURS = 1
 DRIFT_MIN_SAMPLES = 10

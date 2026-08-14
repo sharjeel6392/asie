@@ -7,6 +7,7 @@ from src.constants import (
     DEFAULT_INFERENCE_DEVICE,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MLFLOW_TRACKING_URI,
+    DEFAULT_MODEL_VERSION,
     EXPERIMENT_NAME,
     PRIMARY_MODEL_PATH,
     PRIMARY_TOKENIZER_PATH,
@@ -44,3 +45,10 @@ class Settings:
 
     SHADOW_MODEL_PATH = os.getenv("SHADOW_MODEL_PATH", SHADOW_MODEL_PATH)
     SHADOW_TOKENIZER_PATH = os.getenv("SHADOW_TOKENIZER_PATH", SHADOW_TOKENIZER_PATH)
+
+    # The MLflow run_id of each deployed model, and also its S3 prefix under
+    # models/ -- one identifier for "which weights are these", from training
+    # through to the inference_logs row. Set by gitops/values/inference.yaml
+    # via the chart ConfigMap; a promotion is a change to those values.
+    PRIMARY_MODEL_VERSION = os.getenv("PRIMARY_MODEL_VERSION", DEFAULT_MODEL_VERSION)
+    SHADOW_MODEL_VERSION = os.getenv("SHADOW_MODEL_VERSION", DEFAULT_MODEL_VERSION)

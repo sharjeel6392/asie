@@ -115,27 +115,67 @@ def register_shadow_model(result: ExperimentResult) -> bool:
     save_registry(registry)
     return True
 
-def promote_to_primary() -> None:
+class PromotionBlocked(Exception):
+    """The promotion gate refused. Carries the decision so the caller can log
+    exactly which criterion failed rather than a bare failure."""
+
+    def __init__(self, decision):
+        self.decision = decision
+        super().__init__(f"{decision.decision}: {'; '.join(decision.reasons)}")
+
+
+def promote_to_primary(*, force: bool = False, approved_by: str | None = None) -> dict:
     """
     Promote the current shadow model to primary (production) status.
-    
-    - moves current shadow to primary
-    - appends promotion event to history
+
+    Gated by default. This function used to promote unconditionally -- it was
+    also never called by anything, so the registry had a promotion mechanism
+    with no policy attached. The policy now lives in src/models/promotion.py
+    and is evaluated here (DEPLOYMENT_ARCHITECTURE.md §4).
+
+    force=True is the human-approval path, and exists for exactly one case:
+    the gate returns HOLD when the candidate disagrees heavily with primary,
+    which without ground truth means "the models differ", not "the candidate
+    is wrong". A person decides that one. Pass approved_by so the history
+    records who, since a forced promotion is the one that will need
+    explaining later.
+
+    Note this only updates the registry -- the model is not deployed until
+    its run_id is committed to gitops/values/inference.yaml. The registry
+    proposes; git disposes (§2).
     """
+    from src.models.promotion import evaluate_promotion
+
+    logger = configure_logger()
     registry = load_registry()
 
     shadow = registry.get("shadow")
 
     if not shadow:
         raise ValueError("No shadow model to promote")
-    
+
+    decision = evaluate_promotion(registry)
+    if not decision.should_promote and not force:
+        raise PromotionBlocked(decision)
+
     entry = {
         **shadow,
         "stage": "primary",
-        "promoted_at": datetime.now().isoformat()
+        "promoted_at": datetime.now().isoformat(),
+        "promotion_decision": decision.decision,
+        "promotion_reasons": decision.reasons,
+        "forced": bool(force and not decision.should_promote),
+        "approved_by": approved_by,
     }
 
     registry["primary"] = entry
-    registry["history"].append(entry)
+    registry["history"].append(copy.deepcopy(entry))
 
     save_registry(registry)
+    logger.info(
+        "Promoted %s to primary (%s%s)",
+        shadow.get("run_id"),
+        decision.decision,
+        f", forced by {approved_by}" if entry["forced"] else "",
+    )
+    return entry

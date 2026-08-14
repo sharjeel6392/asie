@@ -39,8 +39,22 @@ def run_drift_job(window_hours: float = 1.0) -> dict:
 
     # guard
     if len(ref_logs) < MIN_SAMPLES or len(cur_logs) < MIN_SAMPLES:
-        logger.warning('Insufficient data for drift computation')
-        insert_drift_metric(0.0)
+        # Deliberately writes NOTHING. This used to insert 0.0, which is a
+        # false negative dressed as a measurement: "we could not measure drift"
+        # and "there is no drift" are opposite statements that both render as
+        # 0.0, and the row overwrites whatever real score preceded it. Observed
+        # live -- a genuine 0.43 was destroyed by one run over a quiet window,
+        # and a DriftWarning alert would have cleared itself simply because
+        # traffic dropped, which is exactly when a model is least observed.
+        #
+        # Absence is the honest signal, and it is already alerted on:
+        # DriftMetricsStale fires when the newest row ages past 15m
+        # (eks/monitoring-rules.yaml).
+        logger.warning(
+            'Insufficient data for drift computation (ref=%d, cur=%d, need %d); '
+            'writing no metric rather than a misleading 0.0',
+            len(ref_logs), len(cur_logs), MIN_SAMPLES,
+        )
         return {}
     
     # normalize window size
