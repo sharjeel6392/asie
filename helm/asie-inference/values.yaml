@@ -41,6 +41,13 @@ aws:
 models:
   s3Uri: "asie-platform-818111885210/models"
 
+# Promoted model version, stamped onto the pod template as an annotation so a
+# model promotion forces a rollout (see templates/deployment.yaml). Overridden
+# by gitops/values/inference.yaml; the default here keeps the chart renderable
+# standalone.
+model:
+  version: "unset"
+
 # Secret (created by eks/db-bootstrap/create-app-secrets.sh) holding the
 # Postgres connection string for asie_app.
 database:

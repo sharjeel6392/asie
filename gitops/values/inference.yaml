@@ -1,0 +1,48 @@
+# Cluster-specific values for helm/asie-inference, replacing the `--set` flags
+# that asie.sh's deploy_workloads() passed. The chart's own values.yaml stays
+# as the neutral default so the chart still installs on a bare cluster.
+#
+# Image tags are per-chart files, not one shared file: MLflow's chart and this
+# one both key off `image.repository`, so a single shared tags file would point
+# MLflow at the inference image.
+
+# THE DEPLOY LEVER for inference.
+#
+# Replaces asie.sh's resolve_image_tag(), which queried ECR at deploy time and
+# fell back to :latest when the SHA tag was missing. That fallback was forced
+# by the imperative design -- `resume` doesn't build, so $GIT_SHA could name a
+# tag that was never pushed -- but it meant the deployed version was a runtime
+# discovery rather than a recorded fact. Here it is recorded: a deploy is a
+# commit to this line, and a rollback is `git revert`.
+image:
+  repository: 818111885210.dkr.ecr.ap-south-1.amazonaws.com/asie-inference-repo
+  tag: latest
+
+serviceAccount:
+  # Created by asie.sh create_irsa(), not by this chart -- the chart has no
+  # ServiceAccount template at all, it only references the name. That is
+  # deliberate: the account carries an IAM role ARN annotation derived from
+  # Terraform output, and a Helm-created one would lack it. The initContainer's
+  # `aws s3 sync` would then fail with AccessDenied, surfacing as a pod stuck
+  # in Init rather than as anything that reads like a permissions problem.
+  #
+  # Consequence worth knowing: this is the one piece of the inference
+  # deployment that is NOT reconciled from git. See §1.2 "bootstrap" in
+  # GITOPS_AND_OPTIMIZATION_PLAN.md.
+  name: asie-irsa-sa
+
+serviceMonitor:
+  # Safe to enable unconditionally here: sync-wave 2 guarantees
+  # kube-prometheus-stack (wave 1) has already installed the CRD.
+  enabled: true
+
+# Model version currently promoted to primary.
+#
+# This is the second half of the rollout mechanism, and the fix for the gap
+# recorded in GITOPS_AND_OPTIMIZATION_PLAN.md §1.2: the model artifact lives in
+# S3 and is fetched by the initContainer at pod startup, so replacing it in S3
+# changes nothing for pods that are already running. Writing the promoted
+# version here changes the POD TEMPLATE, which is what actually forces a
+# rolling update. Without it, a retrain lands in S3 and serving never notices.
+model:
+  version: "bootstrap"

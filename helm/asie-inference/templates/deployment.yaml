@@ -13,6 +13,17 @@ spec:
     metadata:
       labels:
         app: {{ .Release.Name }}
+      annotations:
+        # The model artifact lives in S3 and is pulled by the initContainer at
+        # pod startup, so replacing it in S3 does NOT restart anything that is
+        # already running -- a retrained model would sit in the bucket while
+        # every pod kept serving the old weights. Stamping the promoted version
+        # onto the pod template changes the pod spec, which is what actually
+        # triggers a rolling update. The promotion step writes this value.
+        asie.io/model-version: {{ .Values.model.version | quote }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       initContainers:

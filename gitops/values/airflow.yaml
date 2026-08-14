@@ -1,0 +1,10 @@
+# Image tag override for the upstream apache-airflow/airflow chart, layered on
+# top of eks/airflow-values.yaml (which holds the real configuration: executor,
+# RDS connection, DAG env, IRSA account).
+#
+# Kept separate from eks/airflow-values.yaml so the deploy lever is one line in
+# one place per workload, rather than buried in a 100-line values file.
+images:
+  airflow:
+    repository: 818111885210.dkr.ecr.ap-south-1.amazonaws.com/asie-airflow-repo
+    tag: latest

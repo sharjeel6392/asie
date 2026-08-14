@@ -1,0 +1,37 @@
+# Wave 1 -- must precede Airflow. eks/airflow-values.yaml hardcodes this
+# release's Service DNS (asie-mlflow.mlflow.svc.cluster.local) as the DAG's
+# MLFLOW_TRACKING_URI, so Airflow scheduling first means every task fails to
+# reach a tracking server that doesn't exist yet.
+#
+# The release name MUST stay "asie-mlflow" -- see the comment in asie.sh. It is
+# encoded in that DNS name and in helm/asie-inference's configmap.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: asie-mlflow
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/sharjeel6392/asie.git
+    targetRevision: gitops-deployment
+    path: helm/asie-mlflow
+    helm:
+      releaseName: asie-mlflow
+      # Relative to the chart path, escaping upward within the same repo --
+      # valid for a single-source Application. ($values/... is multi-source
+      # syntax and is only needed for the external charts, which pull their
+      # chart from a Helm repo and their values from here.)
+      valueFiles:
+        - ../../gitops/values/mlflow.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
