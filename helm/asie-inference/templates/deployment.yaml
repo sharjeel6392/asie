@@ -27,6 +27,9 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
+      # Must exceed preStopDelaySeconds, or the kubelet SIGKILLs the container
+      # partway through the drain the preStop hook exists to provide.
+      terminationGracePeriodSeconds: {{ add .Values.preStopDelaySeconds 25 }}
       initContainers:
       - name: fetch-models
         image: {{ .Values.initContainer.image }}
@@ -85,6 +88,20 @@ spec:
         {{- with .Values.volumeMounts }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+        # Measured, not precautionary: a rolling update produced exactly one
+        # 502 out of 145 polled requests, landing at the moment of cutover.
+        #
+        # maxUnavailable floors to 0 at one replica, so the new pod is Ready
+        # before the old one is told to stop -- but Kubernetes and the ALB
+        # deregister independently. The kubelet terminates the old pod
+        # immediately while its IP is still a registered target, and the ALB
+        # keeps sending to it for the few seconds deregistration takes. The
+        # sleep keeps the container serving through that window; it does not
+        # delay the new pod, which is already taking traffic.
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep {{ .Values.preStopDelaySeconds }}"]
         resources:
           requests:
             memory: {{ .Values.resources.requests.memory }}
