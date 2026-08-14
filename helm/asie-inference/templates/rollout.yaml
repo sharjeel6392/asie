@@ -28,6 +28,21 @@ spec:
   # in seconds, and any such intervention must still be reconciled into git
   # afterwards or ArgoCD's selfHeal will undo the undo.
   revisionHistoryLimit: 3
+  # Skip the canary steps when returning to a recently-stable revision.
+  #
+  # Found by running an actual rollback: without this, reverting to the
+  # previous version goes through the same 20% -> analyse -> 50% -> analyse
+  # ladder as a forward deploy. That is precisely backwards during an incident
+  # -- the version you are escaping keeps serving 80% then 50% of traffic for
+  # ten minutes while the KNOWN-GOOD version is cautiously canaried. Gradual
+  # exposure exists to limit the blast radius of something unproven; a revision
+  # that was serving healthily minutes ago is the opposite of unproven.
+  #
+  # Bounded to the last 3 revisions rather than unlimited: "was stable once" is
+  # not the same claim as "was stable recently", and an old revision deserves
+  # the full ladder like any other unproven change.
+  rollbackWindow:
+    revisions: {{ .Values.canary.rollbackWindowRevisions }}
   strategy:
     canary:
       canaryService: {{ .Release.Name }}-canary

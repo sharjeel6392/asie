@@ -92,6 +92,9 @@ canary:
   # The ALB Ingress whose target-group weights the controller rewrites. Lives
   # in eks/ingress.yaml, outside this chart.
   ingressName: asie-inference
+  # How many recent revisions count as "known good" for a fast-tracked
+  # rollback. Returning to one of these skips the canary ladder entirely.
+  rollbackWindowRevisions: 3
   # Traffic weight ladder. 20 -> 50 -> 100, with an analysis gate after each
   # increase rather than a fixed pause: a timer only proves that time passed.
   steps:
