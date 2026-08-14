@@ -149,7 +149,7 @@ An apparent **50% failure rate** was entirely client-side: `curl` against the AL
 
 ---
 
-## Day 5 — Canary Deployment 🟣 Authored, awaiting verification
+## Day 5 — Canary Deployment ✅ Verified on a live cluster
 
 **Notion deliverables:** canary deployment · traffic splitting · validation metrics.
 
@@ -196,3 +196,25 @@ Rolls back to the previous **primary** from history, never to the shadow: the sh
 **Tests: 62 passed**, up from 49; same 5 pre-existing failures.
 
 **Blocked on:** the write-scoped deploy key (`asie/airflow-repo-write` → `asie-gitops-write` secret). Nothing here has run.
+
+### Day 5 verification (live)
+
+**Traffic splitting is real.** Through a full canary run, `/predict` polled every 2s:
+
+```
+309 requests, 309 x HTTP 200        <- zero downtime through the whole canary
+overall:  107 x ddb90ee0 (stable)   77 x 286aecc6 (canary)
+last 40:   21 x ddb90ee0            19 x 286aecc6      ~ 50/50
+final 30:   0 x ddb90ee0            30 x 286aecc6      fully promoted
+```
+
+The last-40 ratio tracks the ALB's then-current 50% weight and the overall skew reflects the earlier 20% phase, so requests were genuinely split by weighted target groups rather than the weights merely being *set*. ALB annotations went 20/80 -> 50/50 -> 0/100. Both AnalysisRuns Successful, three measurements each, all `value=[1]`.
+
+**Two things the live run caught that offline work could not:**
+
+- **The Prometheus service address was wrong.** It is `kube-prom-prometheus`, not `kube-prometheus-stack-prometheus` — the chart shortens the release name and I had guessed. Both consumers were broken in ways that would have looked like policy failures: the AnalysisTemplate would have failed every measurement and, with `failureLimit: 0`, aborted every rollout (a canary that always rolls back reads as a model problem), and the auto-rollback DAG would have raised on every run — the one mechanism meant to catch a degraded model would itself have been down.
+- **`rollouts_pod_template_hash` IS present** on `asie_http_requests_total`, confirming the `podTargetLabels` addition works and the analysis can distinguish canary from stable. That was an unverified assumption when written.
+
+**The Deployment→Rollout migration is not free: 31 x 503 out of 152 requests.** ArgoCD prunes the Deployment and Argo Rollouts creates a fresh ReplicaSet rather than adopting the existing one, so there is a window with no healthy target. A one-time cost, but a real one — in production that migration wants a maintenance window, or a Rollout stood up alongside before the Ingress is switched.
+
+Also as predicted: the first Rollout revision goes straight to 100% with no analysis, because there is no previous ReplicaSet to shift weight away from. Canary steps only apply from the second change onward.
