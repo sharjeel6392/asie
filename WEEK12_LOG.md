@@ -173,7 +173,7 @@ I reported the cluster as pausing when it was not. The detached launch died sile
 
 ---
 
-## Day 6 — Automated Rollback 🟣 Authored, awaiting verification
+## Day 6 — Automated Rollback 🔵 Policy verified live; write path blocked on an image rebuild
 
 **Notion deliverables:** rollback automation · health validation · failure detection · alert integration.
 
@@ -218,3 +218,37 @@ The last-40 ratio tracks the ALB's then-current 50% weight and the overall skew 
 **The Deployment→Rollout migration is not free: 31 x 503 out of 152 requests.** ArgoCD prunes the Deployment and Argo Rollouts creates a fresh ReplicaSet rather than adopting the existing one, so there is a window with no healthy target. A one-time cost, but a real one — in production that migration wants a maintenance window, or a Rollout stood up alongside before the Ingress is switched.
 
 Also as predicted: the first Rollout revision goes straight to 100% with no analysis, because there is no previous ReplicaSet to shift weight away from. Canary steps only apply from the second change onward.
+
+### Day 6 verification (partial)
+
+**The policy works against the real cluster, verified in both directions from inside the Airflow pod.**
+
+Against live Prometheus, with the service healthy, it correctly declined:
+
+```
+DECISION: no_action
+reason:   primary has been live 2628.1h (>6.0h); degradation this long after
+          deploy is unlikely to be the model — not rolling back into an incident
+```
+
+With a recent deploy and genuinely failing metrics injected, it correctly fired:
+
+```
+DECISION:     rollback
+roll back to: ddb90ee0a2654f5cac1bff3f66fe76f3
+reason:       error ratio 40.0% over 5.0% at 5.00 req/s, 0.00h after deploy
+```
+
+It selected the previous **primary** from history rather than the shadow. The failure metrics are injected rather than provoked: causing a real 40% error rate means deliberately breaking production, and the value of the test is the decision, which is pure.
+
+### Two findings
+
+**`git` was not in the Airflow image.** `values_writer.py` shells out to it, so the entire GitOps write path failed with `PermissionError: [Errno 13] Permission denied: 'git'` — which reads like a filesystem permissions problem, not a missing binary. This is the worst shape of failure for this design: under GitOps the commit *is* the deploy, so the pipeline would train, register and export a model, with every upstream step reporting success, and then deploy none of it.
+
+Installed as a **late** Docker layer rather than in the top `apt` block: adding a package there invalidates the torch/transformers install and costs ~15 minutes of rebuild, which is what kept getting killed mid-build.
+
+**The registry and git have diverged.** `model_registry.yaml` still says `primary: ddb90ee0` while git and the running pods say `286aecc6`, because the canary test changed the version directly in git rather than through `promote_to_primary()`. This is the "registry proposes, git disposes" boundary showing its seam — and it has teeth, because the rollback policy reads `promoted_at` from the *registry*. That stale timestamp is exactly why the age guard saw 2628 hours. Needs reconciling before Day 7, or the promotion gate reasons from the same stale field.
+
+### Blocked
+
+Airflow image rebuild, which gates the real commit-from-Airflow test and all of Day 7 (`retraining_pipeline` now calls `_deploy_as_shadow`). Docker Desktop's engine is down on the build host: `com.docker.service` is Stopped and needs an elevated `Start-Service`.
