@@ -87,6 +87,11 @@ provision_infra() {
     step "Provisioning AWS infrastructure with Terraform..."
     cd aws-provision
     terraform init
+    # Same executable-bit repair as destroy_infra -- `terraform init` can leave
+    # provider binaries at -rw-rw-rw- on this host, and the resulting error
+    # blames the plugin's architecture rather than its permissions. Runs after
+    # init, since that is what writes them.
+    find .terraform -name "*.exe" -exec chmod +x {} \; 2>/dev/null || true
     terraform apply -auto-approve
     cd ..
 }
@@ -523,7 +528,27 @@ destroy_infra() {
     # images/objects rather than failing halfway through.
     step "Destroying AWS infrastructure with Terraform..."
     cd aws-provision
-    terraform destroy -auto-approve
+
+    # The provider binaries periodically lose their executable bit on this
+    # Windows/Git-Bash host, and terraform then fails with a misleading
+    # "Failed to load plugin schemas ... Failed to read any lines from plugin's
+    # stdout", which reads like a corrupt download or an architecture mismatch.
+    # The mode is right there in the error (-rw-rw-rw-) and easy to miss.
+    # Cost this teardown one failed run, and an `up` earlier the same day.
+    find .terraform -name "*.exe" -exec chmod +x {} \; 2>/dev/null || true
+
+    # -refresh=false is REQUIRED here, not an optimisation. module.rds reads
+    # the cluster via `data "aws_eks_cluster"`, and `down` deletes the cluster
+    # in the phase before this one -- so refreshing fails with
+    #   Error: reading EKS Cluster (asie-cluster): couldn't find resource
+    # and destroy aborts having removed nothing. That made `down` unable to
+    # complete at all; it went unnoticed because a full teardown had never
+    # been run end to end until 2026-08-14.
+    #
+    # Skipping refresh is safe precisely here: everything in state was created
+    # by this configuration and is about to be destroyed, so a stale read
+    # changes nothing about what gets deleted.
+    terraform destroy -auto-approve -refresh=false
     cd ..
 
     # These were created with `aws iam create-policy` / eksctl --role-only, so
