@@ -61,3 +61,8 @@ model:
   # it is a live promotion candidate the moment the gate has enough online
   # evidence. Exactly the case Day 2's policy exists to decide.
   shadowVersion: "286aecc660884060ac72f46ce3c4ab29"    # eval_f1 0.9824
+
+# Forces a pod-template change so a rollout can be observed without touching
+# the model version. Bump the value to re-run the zero-downtime verification.
+podAnnotations:
+  asie.io/rollout-test: "1"
