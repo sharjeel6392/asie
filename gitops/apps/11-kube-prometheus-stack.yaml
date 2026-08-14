@@ -20,7 +20,13 @@ spec:
   sources:
     - repoURL: https://prometheus-community.github.io/helm-charts
       chart: kube-prometheus-stack
-      targetRevision: 65.1.1
+      # 88.3.0 -- matches what asie.sh actually installed and what is running
+      # in the cluster (helm list). This was pinned at 65.1.1 from an offline
+      # guess: syncing that would have DOWNGRADED Prometheus, Grafana and the
+      # operator CRDs by 23 major chart versions, which is a data-losing
+      # migration dressed up as a first sync. Verify against `helm list -A`
+      # before changing.
+      targetRevision: 88.3.0
       helm:
         releaseName: kube-prometheus-stack
         valueFiles:
