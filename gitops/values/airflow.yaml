@@ -11,4 +11,4 @@ images:
     # the auto-rollback DAG. "latest" is mutable, so a rebuilt image under the
     # same tag leaves the pod spec unchanged and Kubernetes never rolls it --
     # the new code would sit in ECR while the old pods kept running.
-    tag: 8b912b6
+    tag: 218b148
