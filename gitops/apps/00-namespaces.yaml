@@ -15,7 +15,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/sharjeel6392/asie.git
+    repoURL: git@github.com:sharjeel6392/asie.git
     targetRevision: gitops-deployment
     path: eks
     directory:

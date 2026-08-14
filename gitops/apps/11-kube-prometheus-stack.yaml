@@ -31,7 +31,7 @@ spec:
         releaseName: kube-prometheus-stack
         valueFiles:
           - $values/eks/monitoring-values.yaml
-    - repoURL: https://github.com/sharjeel6392/asie.git
+    - repoURL: git@github.com:sharjeel6392/asie.git
       targetRevision: gitops-deployment
       ref: values
   destination:

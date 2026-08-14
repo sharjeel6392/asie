@@ -17,7 +17,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/sharjeel6392/asie.git
+    repoURL: git@github.com:sharjeel6392/asie.git
     # Every Application under gitops/apps/ tracks this same branch -- keep them
     # in step. TODO: flip all of them to `main` once gitops-deployment merges
     # (it branches off aws-migration, which is itself unmerged). Pointing this

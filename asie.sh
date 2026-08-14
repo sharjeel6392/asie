@@ -28,10 +28,14 @@ MONITORING_RELEASE="kube-prometheus-stack"
 ARGOCD_NAMESPACE="argocd"
 ARGOCD_CHART_VERSION="7.7.11"
 ARGOCD_REPO_SECRET="asie-repo-creds"
-# Must match repoURL in gitops/apps/*.yaml and gitops/bootstrap/root-app.yaml.
-# ArgoCD matches a credential to an Application by URL prefix, so a mismatch
-# here means the credential silently does not apply.
-REPO_URL="https://github.com/sharjeel6392/asie.git"
+# Must match repoURL in gitops/apps/*.yaml and gitops/bootstrap/root-app.yaml
+# EXACTLY. ArgoCD pairs a credential to an Application by URL, and the SSH and
+# HTTPS forms of the same repo are different URLs to it -- a mismatch means the
+# credential silently does not apply and the Application sits in
+# ComparisonError with a permission-denied that looks like a bad key.
+REPO_URL="git@github.com:sharjeel6392/asie.git"
+# Secrets Manager entry holding the read-only deploy key's PRIVATE half.
+ARGOCD_REPO_SECRET_SM="asie/argocd-repo-read"
 
 INFERENCE_RELEASE="asie"
 AIRFLOW_RELEASE="airflow"
@@ -230,36 +234,57 @@ bootstrap_secrets() {
 ensure_repo_credential() {
     # ArgoCD cannot read a private repository without a credential, and the
     # failure is quiet in the worst way: the Application appears, reports
-    # "ComparisonError", and nothing ever deploys. Better to stop here with an
-    # instruction than to leave a cluster that looks provisioned and serves
-    # nothing.
-    if kubectl -n $ARGOCD_NAMESPACE get secret $ARGOCD_REPO_SECRET > /dev/null 2>&1; then
-        echo "Repository credential present."
-        return
-    fi
+    # "ComparisonError", and nothing ever deploys -- a cluster that looks
+    # provisioned and serves nothing.
+    #
+    # Sourced from Secrets Manager rather than External Secrets, which is NOT
+    # an inconsistency: ESO is itself deployed BY ArgoCD, so ArgoCD cannot read
+    # the repo to learn how to deploy the thing that would grant it the ability
+    # to read the repo. This one credential has to be bootstrapped, and doing
+    # it from Secrets Manager is what makes it survive `pause`/`down` instead
+    # of needing to be recreated by hand on every rebuild.
+    step "Installing the ArgoCD repository credential from Secrets Manager..."
 
-    cat >&2 <<EOF
+    local key
+    if ! key=$(aws secretsmanager get-secret-value \
+                 --secret-id "$ARGOCD_REPO_SECRET_SM" \
+                 --region "$REGION" \
+                 --query SecretString --output text 2>/dev/null); then
+        cat >&2 <<EOF
 
-ERROR: ArgoCD has no credential for $REPO_URL.
+ERROR: Secrets Manager has no entry "$ARGOCD_REPO_SECRET_SM".
 
-  This repo is private, so ArgoCD cannot read desired state without one.
-  Create a READ-ONLY deploy key on the GitHub repo, then:
+  ArgoCD needs a read-only deploy key to read $REPO_URL.
+  Generate one, add the PUBLIC half to the repo's Deploy keys on GitHub
+  (read-only), and store the PRIVATE half:
 
-    kubectl -n $ARGOCD_NAMESPACE create secret generic $ARGOCD_REPO_SECRET \\
-      --from-literal=type=git \\
-      --from-literal=url=$REPO_URL \\
-      --from-file=sshPrivateKey=/path/to/deploy_key \\
-      --dry-run=client -o yaml | kubectl label -f- --local -o yaml \\
-      argocd.argoproj.io/secret-type=repository | kubectl apply -f -
+    ssh-keygen -t ed25519 -N "" -C "argocd-read@asie" -f ./argocd_key
+    aws secretsmanager create-secret --name $ARGOCD_REPO_SECRET_SM \\
+      --secret-string file://argocd_key --region $REGION
+    rm -f ./argocd_key
 
-  The label is required -- ArgoCD only discovers repository secrets carrying
-  it, and without it the secret exists and is ignored.
-
-  Then re-run this command. Everything before this point is idempotent, so
-  it will skip straight back to here.
+  Then re-run. Everything before this point is idempotent.
 
 EOF
-    exit 1
+        exit 1
+    fi
+
+    # Recreated every run rather than skipped-if-present: the key can rotate in
+    # Secrets Manager, and a stale cluster-side copy would fail authentication
+    # in a way that reads like a revoked key rather than a stale cache.
+    #
+    # The argocd.argoproj.io/secret-type=repository label is what makes ArgoCD
+    # DISCOVER this secret at all. Without it the secret exists, looks correct,
+    # and is silently ignored.
+    kubectl -n $ARGOCD_NAMESPACE create secret generic $ARGOCD_REPO_SECRET \
+        --from-literal=type=git \
+        --from-literal=url="$REPO_URL" \
+        --from-literal=sshPrivateKey="$key" \
+        --dry-run=client -o yaml \
+      | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml \
+      | kubectl apply -f - > /dev/null
+
+    echo "Repository credential installed for $REPO_URL."
 }
 
 install_argocd() {
