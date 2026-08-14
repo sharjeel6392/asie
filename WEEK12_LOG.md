@@ -117,3 +117,32 @@ Correctly scoped to the shadow's run_id and correctly refusing: the shadow is of
 ### Still blocked
 
 - **Write-scoped credential** for the promotion commit from Airflow — deliberately separate from ArgoCD's read key so a compromised ArgoCD cannot rewrite desired state.
+
+---
+
+## Day 4 — Rolling Deployments ✅
+
+**Notion deliverables:** rolling updates · zero-downtime deployment · deployment verification.
+
+### Outcome
+
+**The phantom drift was a real bug, found by diffing rather than guessing.** Comparing the live Application spec against the git manifest gave `retry: git={...} live=null`. `spec.retry` is not a field on the Application CRD — ArgoCD nests it inside `syncPolicy` — so the API server pruned it. Two silent consequences: the retry/backoff policy never applied (added precisely for CRD-heavy syncs that exceed one attempt), and the pruned field read as permanent drift, which is why `asie-root` sat OutOfSync on exactly those two Applications. The multi-source shape was a red herring; they were simply the only two carrying a `retry` block. Under `selfHeal: true` a diff that can never close is a standing re-sync loop. Fixed; `asie-root` is now Synced.
+
+**Zero-downtime was NOT free, contrary to the Day 1 assumption.** A rolling update polled every 2s gave:
+
+```
+144 x 200, 1 x 502  — the 502 landing exactly at the version transition
+286aecc6 (34 polls) -> [502] -> ddb90ee0 (110 polls)
+```
+
+`maxUnavailable` floors to 0 at one replica, so the new pod is Ready before the old is told to stop — but Kubernetes and the ALB deregister independently. The kubelet terminates the old pod while its IP is still a registered target, and the ALB keeps routing there for the seconds deregistration takes. Day 1's §5 "Layer 0 — already in place" was too generous: probes prevent a *broken* model taking traffic, they do not make a *healthy* rollout seamless.
+
+Fixed on both sides of the race — preStop `sleep 20` with `terminationGracePeriodSeconds` derived as delay+25 (deregistration), and `pod-readiness-gate-inject` on the namespace so a pod is not Ready until the ALB has registered it (registration). **Verified: 150/150 × 200, zero failures.**
+
+Note the intermediate run still showed one 502: the rollout that *installs* the drain hook replaces a pod that predates it. A fix to termination behaviour cannot validate itself on the deploy that introduces it.
+
+**Rollback proven end to end.** `git revert` of a model-version commit rolled production back, ArgoCD syncing automatically. That only reaches real weights because Day 2 made exports run_id-keyed and append-only — under the old fixed-prefix layout the revert would have re-fetched the same overwritten bytes and silently changed nothing. Day 6's Layer 1 is therefore already demonstrated.
+
+### A measurement lesson worth keeping
+
+An apparent **50% failure rate** was entirely client-side: `curl` against the ALB hostname without `-4` alternates `000`/`200` on this Windows host, while both A records return 200 addressed directly and `-4` gives 6/6. I nearly reported a healthy stack as half-broken. Combined with the earlier "no processes running" during a live run, the pattern is consistent: **verify the instrument before believing the measurement.**
