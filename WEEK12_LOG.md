@@ -173,7 +173,7 @@ I reported the cluster as pausing when it was not. The detached launch died sile
 
 ---
 
-## Day 6 — Automated Rollback 🔵 Policy verified live; write path blocked on an image rebuild
+## Day 6 — Automated Rollback ✅ Verified live
 
 **Notion deliverables:** rollback automation · health validation · failure detection · alert integration.
 
@@ -252,3 +252,57 @@ Installed as a **late** Docker layer rather than in the top `apt` block: adding 
 ### Blocked
 
 Airflow image rebuild, which gates the real commit-from-Airflow test and all of Day 7 (`retraining_pipeline` now calls `_deploy_as_shadow`). Docker Desktop's engine is down on the build host: `com.docker.service` is Stopped and needs an elevated `Start-Service`.
+
+---
+
+## Day 7 — Autonomous MLOps Pipeline Demo ✅
+
+The whole loop, on the live cluster, end to end.
+
+### 1. Drift — induced honestly, not simulated
+
+Drift sat at 0.43, below the 0.5 threshold, so the DAG would correctly have skipped. Rather than lower the threshold or bypass the gate, 50 out-of-distribution requests were sent (cooking, cats, running — the reference distribution is financial sentiment). Recomputed drift: **0.742**, driven by `input_length`/`word_count`/`special_char_ratio` at 0.77 and `prediction_drift` at 1.0. Real inputs, real drift.
+
+### 2. Retraining triggered, and the gate refused to ship a regression
+
+```
+dvc_pull         success     dataset pulled from the S3 DVC remote
+check_drift      success     0.742 > 0.5
+retrain_pipeline success     New model is worse than current shadow. Skipping update.
+                             {'status': 'skipped', 'reason': 'model_not_better'}
+```
+
+The most valuable possible outcome, and not the one that was planned: an unattended pipeline trained a model, found it worse than the incumbent, and **deployed nothing**. A rigged win would have demonstrated less.
+
+### 3. The promotion gate on real production data
+
+The standing shadow (`286aecc6`, f1 0.9824) genuinely beats primary (`ddb90ee0`, 0.9715), so it was a real candidate:
+
+```
+samples              1149        (production floor is 1000 — genuinely met)
+failures                0
+disagreement_rate     0.0
+soak_hours           5.01
+shadow p95         94.2ms   vs primary 96.9ms   (the candidate is FASTER)
+
+production thresholds -> insufficient_data: "soaked 5.0h, need 24.0h"
+demo thresholds (soak 1h) -> promote: "1149 samples over 5.0h, 0.00% failures"
+```
+
+Only the soak was compressed. Every other criterion is the production value and was met on real traffic. Worth stating plainly: the demo does not run the production gate, it runs the production gate with one threshold relaxed.
+
+### 4. Promotion → commit → canary → serving
+
+`promote_to_primary()` updated the registry, `values_writer` committed `c434830` to GitHub as **ASIE Promoter**, ArgoCD synced it, and Argo Rollouts canaried it 20% → analyse → 50% → analyse → 100%.
+
+```
+200 requests through the promotion, 200 x HTTP 200   <- zero downtime
+final: 10/10 requests served by 286aecc6, single pod
+```
+
+### What the demo cost in truth
+
+Two findings surfaced while setting it up, both committed:
+
+- **`insert_drift_metric(0.0)` on insufficient data was a false-negative generator.** A genuine 0.43 was overwritten with 0.0 by one run over a quiet window — the score went *down* immediately after injecting out-of-distribution traffic, which is how the bug announced itself. "Could not measure" and "no drift" both rendered as 0.0, so a DriftWarning would clear itself simply because traffic dropped, precisely when a model is least observed. Now writes nothing; `DriftMetricsStale` already alerts on absence.
+- **`run_drift_job` cannot execute inside the Airflow image.** pandas rejects the SQLAlchemy `text()` object under the `<2.0` pin Airflow 2.10 forces, while the same code works in the serving image on 2.x. The DAG only *reads* the latest metric so it is unaffected today, but computing drift from Airflow would hit it.
