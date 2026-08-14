@@ -6,7 +6,11 @@ The Automated Sentiment Intelligence Engine (ASIE) is an end-to-end MLOps system
 
 ASIE trains a transformer-based sentiment classifier, tracks experiments with MLflow, promotes selected model runs into serving artifacts, exposes inference through a FastAPI service, logs prediction metadata, computes drift signals, and exposes monitoring data through Prometheus-compatible endpoints. The system also includes infrastructure foundations for Docker, Kubernetes, Helm, Terraform, and EKS.
 
-The next phase of the project is focused on production migration and operational hardening. AWS migration, GitOps deployment, and GPU-backed training are currently considered work in progress. These workstreams are intentionally documented as upcoming initiatives rather than completed production guarantees.
+The system is **complete and was verified end to end on live AWS infrastructure on 2026-08-14**. It runs on EKS with RDS Postgres, models versioned in S3, and ArgoCD reconciling every workload from git — deploying a model is a commit and rolling back is a revert. Argo Rollouts shifts real traffic through a canary gated on Prometheus, a promotion policy decides on measured evidence whether a candidate is safe to serve, and a scheduled job reverts a degraded model automatically.
+
+GPU-backed training was considered and deliberately dropped: at 65–95 ms p95 on CPU it would have cost roughly ten times more for latency nobody was waiting on. The infrastructure has since been destroyed to zero residual cost; `./asie.sh up` rebuilds it from an empty account.
+
+The one structural limitation is stated plainly throughout this document: `true_label` is NULL on every production row, so no online signal can establish that a model is *better* — only that it has not broken.
 
 ## 2. Project Metadata
 
@@ -20,9 +24,9 @@ The next phase of the project is focused on production migration and operational
 | Serving Framework | FastAPI |
 | Training Stack | PyTorch, Hugging Face Transformers, Datasets, scikit-learn |
 | Experiment Tracking | MLflow |
-| Monitoring | Prometheus-compatible metrics, Alertmanager webhook flow |
-| Deployment Target | Docker, Kubernetes, Helm, AWS EKS |
-| Current Maturity | Local and prototype deployment system with AWS migration in progress |
+| Monitoring | kube-prometheus-stack (Prometheus, Alertmanager, Grafana) in-cluster |
+| Deployment Target | AWS EKS via ArgoCD (GitOps) with Argo Rollouts canary delivery |
+| Current Maturity | **Complete.** Autonomous loop verified end to end on a live EKS cluster, 2026-08-14. AWS subsequently torn down to zero. |
 
 ## 3. Problem Statement
 
@@ -91,25 +95,30 @@ The following items are not considered complete production capabilities yet:
 
 ## 6. Current Status
 
+Verified on a live EKS cluster on 2026-08-14. Every "Implemented" row below was exercised against real infrastructure, not merely written.
+
 | Area | Status | Notes |
 | --- | --- | --- |
 | Data ingestion and validation | Implemented | Validates required columns and label range. |
 | Preprocessing | Implemented | Tokenizes text and writes preprocessed Parquet files. |
-| Model training | Implemented | Uses Hugging Face Trainer with configurable parameters. |
-| Experiment tracking | Implemented locally | Logs parameters, metrics, dataset stats, environment info, and artifacts to MLflow. |
-| Model promotion | Partially implemented | Registry structure exists; promotion remains mostly manual. |
-| Model export | Partially implemented | Export script exists but should be hardened before cloud use. |
+| Model training | Implemented | Hugging Face Trainer with configurable parameters. |
+| Experiment tracking | Implemented | MLflow on EKS, backed by RDS, artifacts in S3. |
+| Model promotion | **Implemented** | A real policy (`src/models/promotion.py`): offline `eval_f1` decides *better*, online evidence decides *safe*. Verified against 1149 production samples. |
+| Model export | **Implemented** | Exports keyed by MLflow `run_id` and append-only in S3 — the property that makes rollback reach real content rather than re-fetching overwritten weights. |
 | FastAPI inference | Implemented | Serves `/health`, `/predict`, `/drift`, `/metrics`, and webhook routes. |
-| Shadow model serving | Implemented | Shadow model is loaded if artifacts are available; failures do not block primary inference. |
-| Inference logging | Implemented | SQLite schema captures request, model, confidence, latency, disagreement, embeddings, and metadata. |
-| Drift detection | Implemented as manual job | Computes drift over a selected window using logged inference records. |
-| Monitoring and alerting | Prototype implemented | Prometheus metric and Alertmanager webhook flow exist. |
-| Docker packaging | Implemented | Current image copies local exported model artifacts into the container. |
-| Helm packaging | Implemented | Includes Deployment, Service, ConfigMap, and HPA templates. |
-| Terraform networking | Implemented as scaffold | VPC, subnet, and EC2 modules exist. |
-| AWS migration | Work in progress | Existing AWS files are scaffolding; migration should be cost-controlled and reviewed before apply. |
-| GitOps deployment | Work in progress | Planned for controlled rollout and environment synchronization. |
-| GPU training | Work in progress | Planned for faster retraining and possible spot instance usage. |
+| Shadow model serving | Implemented | Runs on 100% of traffic with output logged and never returned — full-traffic evaluation at zero blast radius. |
+| Inference logging | **Implemented** | RDS Postgres, carrying the deployed model `run_id` on every row. Previously a hardcoded constant, which would have made the promotion gate compute over a mixture of models. |
+| Drift detection | **Implemented** | Runs as an Airflow DAG gated on the drift score. Demonstrated by inducing genuine drift (0.742) with out-of-distribution traffic. |
+| Monitoring and alerting | **Implemented** | kube-prometheus-stack in-cluster; PrometheusRule alerts feed both the canary analysis and the rollback policy. |
+| Docker packaging | Implemented | Models fetched from S3 at pod startup by an initContainer rather than baked into the image (2.05 GB, down from ~7–8 GB). |
+| Helm packaging | Implemented | Deployment/Rollout, Services, ConfigMap, HPA, ServiceMonitor, AnalysisTemplate. |
+| Terraform networking | **Implemented** | VPC, subnets, NAT, S3 gateway endpoint, RDS, ECR, lifecycle rules. Applied and destroyed cleanly. |
+| AWS migration | **Complete** | Week 11. Full stack on EKS, verified end to end. |
+| GitOps deployment | **Complete** | Week 12. ArgoCD app-of-apps; `asie.sh` installs ArgoCD and stops deciding what runs. |
+| Progressive delivery | **Complete** | Argo Rollouts + ALB weighted target groups, gated on Prometheus. 309-request canary at 100% success. |
+| Automated rollback | **Complete** | Scheduled DAG reverts a degraded primary by committing to git. |
+| GPU training | **Dropped by decision** | Serving p95 is 65–95 ms on CPU; GPU would cost ~10× for latency nobody waits on. Spot instances for training remain worthwhile. |
+| Labelled feedback loop | Not implemented | `true_label` is NULL in production, so there is no online ground truth. This is the honest next feature. |
 
 ## 7. Functional Requirements
 
@@ -464,11 +473,15 @@ flowchart TD
     AM --> W["/webhook/drift"]
 ```
 
-AWS migration remains work in progress. The existing files should be treated as scaffolding until Terraform plans, EKS settings, IAM roles, networking, and cost controls are reviewed together.
+This infrastructure was applied, operated and destroyed repeatedly during Weeks 11–12. `scripts/verify-teardown.sh` confirms a teardown leaves no billable resources; getting there required fixing three defects that had made `asie.sh down` unable to complete, none of which was visible until a full teardown was actually run.
 
-## 11. AWS Migration: Work in Progress
+## 11. AWS Migration: Complete
 
-AWS migration is a planned workstream to move ASIE from local and prototype deployment into a managed cloud environment.
+**Delivered 2026-08-14 (Week 11).** The plan below is kept as the design record; what follows is what actually happened.
+
+The stack runs on EKS with RDS Postgres replacing both SQLite databases, models in S3 fetched at pod startup by an initContainer, S3 as the DVC remote, kube-prometheus-stack in-cluster, and one shared ALB serving inference and Grafana. The inference image went from ~7–8 GB to **2.05 GB** by splitting requirements and using CPU-only torch. `asie.sh` reduces the lifecycle to `up` / `pause` / `resume` / `down`.
+
+The first real deploy surfaced four failures no amount of offline validation would have caught — every one leaving pods that *looked* healthy: MLflow rejecting every in-cluster call as a DNS-rebinding attack, Airflow silently loading zero DAGs, alerting entirely dead, and drift scores that could never be written because psycopg2 will not adapt numpy floats.
 
 ### 11.1 Migration Goals
 
@@ -522,9 +535,15 @@ Recommended controls:
 - Use Terraform remote state with locking only when migration stabilizes.
 - Require manual review before applying Terraform changes that create NAT Gateway, EKS, GPU, or Load Balancer resources.
 
-## 12. GitOps Deployment: Work in Progress
+## 12. GitOps Deployment: Complete
 
-GitOps deployment is planned as a future control plane for managing ASIE releases.
+**Delivered 2026-08-14 (Week 12).** The plan below is kept as the design record; what follows is what was built and measured.
+
+ArgoCD reconciles every workload from git via an app-of-apps; `asie.sh` installs ArgoCD and then stops deciding what runs. Argo Rollouts shifts real traffic 20% → 50% → 100% through ALB weighted target groups, each step gated on a Prometheus success-rate analysis. Airflow commits model versions itself using a write-scoped deploy key, which is what makes deployment a commit and rollback a `git revert`.
+
+Measured: a **309-request canary at 100% success**, with the served model version tracking the ALB weights rather than the weights merely being set; a **200-request promotion with zero downtime**; and a promotion gate evaluated against **1149 real production samples**.
+
+Nine defects were found by running the system rather than reading it — the most instructive being that model rollback was *impossible* until exports became `run_id`-keyed, because a `git revert` re-fetched the same overwritten weights and appeared to succeed while changing nothing. `DEMO_REPORT.md` §6 lists them with what each would have cost.
 
 ### 12.1 GitOps Goals
 
@@ -571,9 +590,11 @@ The desired model promotion flow is:
 9. Argo CD applies the rollout.
 10. Rollback remains possible by reverting the Git commit.
 
-## 13. GPU Training: Work in Progress
+## 13. GPU Training: Dropped by Decision
 
-GPU training is planned to reduce model iteration time and support future retraining workflows.
+**Not implemented, deliberately (2026-08-14).** Serving p95 is 65–95 ms on CPU at this volume, so GPU nodes would cost roughly 10× for latency nobody is waiting on. With limited time remaining this was the lowest-value work available, and it was dropped in favour of completing the demo and tearing the account down before credits expired.
+
+The reasoning below is retained because parts of it remain worthwhile if the project resumes: **spot instances for training** are a genuine saving on an interruption-tolerant workload, and **right-sizing** the inference requests is now possible against real Prometheus data rather than guesswork. The GPU half is what the latency numbers do not justify.
 
 ### 13.1 GPU Training Goals
 
@@ -913,115 +934,65 @@ helm upgrade --install asie-inference ./helm/asie-inference
 
 ## 22. Roadmap
 
-### Phase 1: Repository Hygiene and Local Baseline
+All phases are closed. Retained as the record of what was planned against what shipped.
 
-Status: In progress / mostly complete.
+| Phase | Status | Outcome |
+| --- | --- | --- |
+| **1. Repository Hygiene and Local Baseline** | ✅ Complete | Audit found the serving app could not start at all (`ImportError` on `DB_PATH`, undefined `REGISTRY_PATH`) and three wrong paths in the Docker builds. Fixed, plus UTF-16-encoded requirements files and ten verified-dead files removed. |
+| **2. Model Artifact Strategy** | ✅ Complete | S3, keyed by MLflow `run_id`, fetched at pod startup by an initContainer. Append-only, which is what makes a version pointer address immutable content. Image reduced from ~7–8 GB to 2.05 GB. |
+| **3. AWS Migration** | ✅ Complete | EKS, RDS, S3, ECR, DVC remote, in-cluster monitoring, one shared ALB. `asie.sh` gives `up` / `pause` / `resume` / `down`. Teardown to zero residual resources verified by `scripts/verify-teardown.sh`. |
+| **4. GitOps Deployment** | ✅ Complete | ArgoCD app-of-apps, Argo Rollouts canary on ALB weighted target groups, promotion gate, automated rollback, and Airflow committing model versions with a write-scoped deploy key. |
+| **5. GPU Training** | 🚫 Dropped | Serving p95 is 65–95 ms on CPU; GPU would cost ~10× for latency nobody waits on. Spot instances for training remain worthwhile. |
+| **6. Production Monitoring and Retraining** | ✅ Complete | Drift detection triggers retraining via Airflow; the loop was demonstrated end to end, including the case where the retrained model lost to the incumbent and nothing was deployed. |
 
-Deliverables:
+### What a Phase 7 would be
 
-- Remove local artifacts and secrets from working tree.
-- Strengthen `.gitignore`, `.dockerignore`, and `.dvcignore`.
-- Add `.env.example`.
-- Clean dependency files.
-- Update tests to match current API.
-- Validate local service startup.
+Not planned or scheduled — recorded because the limitation is real and known.
 
-### Phase 2: Model Artifact Strategy
-
-Status: Planned.
-
-Deliverables:
-
-- Decide between baked-in artifacts, S3 download, MLflow artifact store, or mounted storage.
-- Make model URI configurable.
-- Add artifact integrity checks.
-- Reduce inference image size.
-- Add startup failure behavior for missing primary artifacts.
-
-### Phase 3: AWS Migration
-
-Status: Work in progress.
-
-Deliverables:
-
-- Review Terraform architecture and cost impact.
-- Configure ECR repository and lifecycle policy.
-- Build and push inference image.
-- Review EKS versus lower-cost alternatives.
-- Configure IAM roles and secret management.
-- Deploy service to a sandbox AWS environment.
-- Validate teardown to zero residual resources.
-
-### Phase 4: GitOps Deployment
-
-Status: Work in progress.
-
-Deliverables:
-
-- Define environment repository layout.
-- Add Argo CD application manifests.
-- Wire Helm chart to GitOps reconciliation.
-- Add image tag update workflow.
-- Add promotion gates for model rollout.
-- Document rollback procedure.
-
-### Phase 5: GPU Training
-
-Status: Work in progress.
-
-Deliverables:
-
-- Add GPU-aware training configuration.
-- Enable mixed precision training.
-- Add checkpointing.
-- Add remote MLflow tracking.
-- Add short-lived cloud training job.
-- Evaluate spot GPU usage.
-- Persist trained artifacts to durable storage.
-
-### Phase 6: Production Monitoring and Retraining
-
-Status: Planned.
-
-Deliverables:
-
-- Replace local SQLite with durable storage.
-- Add dashboarding.
-- Add alert severity policy.
-- Add retraining trigger design.
-- Add human approval workflow.
-- Add rollback and incident response procedures.
+**Labelled feedback.** `true_label` is NULL on every production row, so there is no online ground truth. Every online signal in this system establishes that a model is *not broken*; none can establish that it is *better*. Only offline `eval_f1` on a held-out set carries that claim, and it is measured before the model ever sees production traffic. Closing the gap needs a labelling path — human review, delayed outcomes, or a proxy signal — and until it exists, "is the model right?" is a question the platform cannot answer, only "has it stopped working?"
 
 ## 23. Acceptance Criteria
 
-ASIE should be considered ready for a controlled AWS prototype when:
+Assessed against the live system on 2026-08-14.
 
-- No local secrets or cloud state are tracked.
-- Docker build context is small and predictable.
-- Model artifact strategy is explicit.
-- Tests pass with model loading mocked or managed.
-- Terraform plan is reviewed before apply.
-- AWS resources can be destroyed reliably.
-- ECR image size is acceptable.
-- Health, prediction, metrics, and drift routes work in the target environment.
-- Logs and alerts are visible.
-- Cost controls are documented and followed.
+### Controlled AWS prototype
 
-ASIE should be considered ready for production-like operation only when:
+| Criterion | Met | Evidence |
+| --- | --- | --- |
+| No local secrets or cloud state tracked | ✅ | Credentials in Secrets Manager; deploy keys never committed. |
+| Docker build context small and predictable | ✅ | Inference image 2.05 GB, down from ~7–8 GB. |
+| Model artifact strategy explicit | ✅ | S3, `run_id`-keyed, append-only, fetched by initContainer. |
+| Tests pass | ✅ | 62 passing. |
+| Terraform reviewed before apply | ✅ | `plan` reviewed each cycle; `validate` in the loop. |
+| AWS resources destroyable reliably | ✅ | Now — three defects made `down` unable to complete until they were fixed. `scripts/verify-teardown.sh` reports clean. |
+| ECR image size acceptable | ✅ | See above. |
+| Health, prediction, metrics, drift routes work | ✅ | All exercised through the ALB. |
+| Logs and alerts visible | ✅ | kube-prometheus-stack, Grafana, PrometheusRule alerts. |
+| Cost controls documented and followed | ✅ | `pause`/`resume`; S3 lifecycle expiry; ECR untagged expiry. |
 
-- GitOps rollout is implemented.
-- Model promotion has approval gates.
-- Logs and metrics use durable managed storage.
-- Secrets are managed through AWS-native services.
-- Security groups and IAM policies are least privilege.
-- Load testing validates resource requests and HPA settings.
-- Drift thresholds are calibrated.
-- Rollback and teardown procedures are tested.
+### Production-like operation
+
+| Criterion | Met | Evidence |
+| --- | --- | --- |
+| GitOps rollout implemented | ✅ | ArgoCD app-of-apps; deploying is a commit. |
+| Model promotion has approval gates | ✅ | Offline + online gate; `HOLD` routes ambiguous cases to human review. |
+| Logs and metrics use durable managed storage | ✅ | RDS Postgres; Prometheus with persistent volumes. |
+| Secrets managed through AWS-native services | ⚠️ Partial | Bootstrapped from Secrets Manager, but delivered as plain Kubernetes Secrets. External Secrets Operator with rotation is the intended upgrade. |
+| Security groups and IAM least privilege | ✅ | Three per-workload IAM policies with IRSA; RDS private-subnet only. |
+| Load testing validates resource requests and HPA | ⚠️ Partial | Sustained real load through canary and promotion rollouts (1402 logged inferences), but no dedicated load test. Requests and limits remain first-guess values. |
+| Drift thresholds calibrated | ⚠️ Partial | `DRIFT_THRESHOLD = 0.5` matches the Prometheus warning threshold and behaves sensibly — 0.43 on normal traffic, 0.742 on out-of-distribution — but was not calibrated against labelled degradation. |
+| Rollback and teardown procedures tested | ✅ | Rollback exercised end to end via an Airflow-authored commit; teardown verified to zero. |
+
+**The honest summary:** every criterion is met except three marked partial, and none of the three is blocked by design — they are unfinished work with a clear shape. The one limitation that *is* structural is the absence of online ground truth (§22), which no amount of engineering closes without a labelling path.
 
 ## 24. Conclusion
 
-ASIE demonstrates a strong MLOps-oriented architecture for financial sentiment classification. It already includes the core building blocks of a production ML system: reproducible training, experiment tracking, model registry metadata, API serving, primary-shadow comparison, inference logging, drift detection, and monitoring hooks.
+ASIE is a complete, autonomous MLOps platform for financial sentiment classification, verified end to end on live AWS infrastructure. It closes the loop that most ML projects leave open: drift detection triggers retraining, a promotion gate decides on evidence whether the result is safe to serve, ArgoCD deploys it through a traffic-shifting canary, and a scheduled job rolls it back if it degrades. Deploying a model is a commit; rolling back is a revert.
 
-The project is not yet a finished cloud production deployment. Its next important work is operational hardening: choosing a cost-aware AWS architecture, externalizing model artifacts, updating tests, implementing GitOps deployment, and adding GPU-backed training only where the acceleration justifies the expense.
+The system's most defensible property is what it refuses to do. `true_label` is NULL on every production row, so online evidence can establish that a candidate is *not broken* but never that it is *better* — and the design says so rather than papering over it. Offline `eval_f1` carries the "better" claim; the online gate carries "safe"; disagreement between models returns `HOLD` for a human rather than pretending to adjudicate without ground truth. The single most useful moment in the final demonstration was unplanned: drift crossed the threshold, retraining ran, the new model lost to the incumbent, and **nothing was deployed**.
 
-The recommended path is to proceed carefully: keep the local and container baseline clean, migrate one cloud capability at a time, and require explicit teardown and cost review for every AWS resource introduced.
+The engineering lesson worth carrying forward is that nearly every serious defect was found by running the system, not by reading it. An ALB controller nothing installed, leaving Ingresses without an address while every Application reported Healthy. Model rollback that was impossible because exports overwrote a fixed S3 prefix, so a revert appeared to succeed and changed nothing. A `retry` field the API silently pruned, which both disabled the policy and held the root Application permanently out of sync. A drift metric that wrote 0.0 when it could not measure, so an alert would clear itself precisely when traffic — and observation — dropped. Three separate defects in the teardown path, all latent because a full teardown had never been run to completion.
+
+What remains is honest and bounded: labelled feedback to make "is this model right?" answerable at all, External Secrets Operator for rotation, dedicated load testing to replace first-guess resource requests, and drift thresholds calibrated against real degradation rather than reasonable defaults. GPU training was considered and deliberately dropped — at 65–95 ms p95 on CPU, it would have cost roughly ten times more for latency nobody was waiting on.
+
+The infrastructure has been destroyed to zero residual cost, and `./asie.sh up` rebuilds it from an empty account — a path that is now genuinely tested, including the gaps that testing exposed.

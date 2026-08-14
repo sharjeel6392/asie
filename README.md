@@ -20,11 +20,14 @@ ASIE offers a suite of features engineered for MLOps maturity:
 - **Immutable Model Promotion**: A defined process to convert experimental runs into approved, versioned release artifacts for serving.
 - **Advanced Data Versioning**: Treating datasets as identified, versioned artifacts with explicit structure and lineage, independent of training code.
 - **Secure Cloud Deployment**: Implementing robust AWS infrastructure patterns including private subnets, SSM Session Manager access, ECR, and IAM roles for credential-free operations.
-- **Kubernetes-Native Orchestration**: Running the inference service on Amazon EKS with Helm-managed deployments, CPU-based autoschaling (HPA), self-healing via liveness probes, and zero-downtime rolling updates.
-- **Structured Inference Logging**: Dedicated SQLite-based logging for online predictions, capturing detailed metadata, latency, and confidence scores.
-- **Multi-Signal Drift Detection**: A time-windowed drift detection engine that monitors input distribution, output label distribution, confidence score shifts, and shadow model disagreement —  enabling proactive detection of model degradation before acciracy metrics are available.
+- **Kubernetes-Native Orchestration**: Running the inference service on Amazon EKS with Helm-managed deployments, CPU-based autoscaling (HPA), self-healing via probes, and verified zero-downtime rollouts (a preStop drain plus an ALB readiness gate — measured at 150/150 successful requests through a rollout).
+- **Structured Inference Logging**: Every prediction is logged to RDS Postgres with the deployed model version, latency, confidence, and primary/shadow disagreement — the evidence the promotion gate later reasons over.
+- **Multi-Signal Drift Detection**: A time-windowed drift detection engine that monitors input distribution, output label distribution, confidence score shifts, and shadow model disagreement —  enabling proactive detection of model degradation before accuracy metrics are available.
 - **Event-Driven Alerting Pipeline**: Drift metrics are exposed to Prometheus, evaluated against defined alert thresholds, routed through Alertmanager, and delivered to a structured webhook endpoint — transforming passive drift signal into actionable, extensible system events.
-- **Structured Inference Logging**: Dedicated SQLite-based logging for online predictions, capturing detailed metadata, latency, and confidence scores.
+- **GitOps Delivery**: ArgoCD reconciles every workload from git — deploying a model is a commit, and rolling back is `git revert`. The deploy script installs ArgoCD and then stops deciding what runs.
+- **Progressive Delivery**: Argo Rollouts shifts real traffic 20% → 50% → 100% via ALB weighted target groups, with each step gated on a Prometheus success-rate analysis that aborts the rollout on its own.
+- **Evidence-Based Promotion**: A model is promoted only when it beats the incumbent offline *and* proves safe online — sample count, soak duration, failure rate and p95 latency, evaluated against live traffic.
+- **Automated Rollback**: A scheduled job reverts a degraded primary by committing the previous version back to git, guarded so it fires only close to a deploy — where the deploy is the likely cause.
 - **Safe Shadow Deployment**: Enabling silent execution of new model versions alongside primary models for performance comparison and risk mitigation without impacting live traffic.
 
 ## 🏗 System Architecture
@@ -63,11 +66,11 @@ flowchart TD
 
     ELB[AWS Load Balancer] --> ServingSystem
     ServingSystem --> Client[Client Applications]
-    ServingSystem --> SQLiteLogs[SQLite Inference Logs]
+    ServingSystem --> InferenceLogs[(RDS Postgres<br/>inference_logs)]
     
-    SQLiteLogs --> DriftEngine[Drift Detection Engine]
+    InferenceLogs --> DriftEngine[Drift Detection Engine]
     DriftEngine --> ImpactAnalysis[Impact Analysis]
-    DriftEngine --> DriftDB[(drift.db)]
+    DriftEngine --> DriftDB[(RDS Postgres<br/>drift_metrics)]
     
     %% Fixed syntax here
     DriftDB --> MetricsEndpoint[/ "/metrics endpoint" /]
@@ -180,12 +183,12 @@ The detection engine monitors *four* complementary signals, each targeting a dif
 
 **Architecture**
 
-The detection pipeline is built as a downstream layer on top of the existing inference logging infrastructure, consuming SQLite-logged inference records without touching the serving path.
+The detection pipeline is built as a downstream layer on top of the existing inference logging infrastructure, consuming logged inference records from RDS without touching the serving path.
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
 flowchart LR
-    SQLiteLogs[SQLite Inference Logs] --> FeatureEngineering[Feature Engineering<br/>Pipeline]
+    InferenceLogs[(RDS Postgres<br/>inference_logs)] --> FeatureEngineering[Feature Engineering<br/>Pipeline]
     FeatureEngineering --> DriftEngine[Drift Detection Engine<br/>Multi-Signal]
     DriftEngine --> InputDrift[Input Distribution<br/>Signal]
     DriftEngine --> OutputDrift[Output Label<br/>Distribution Signal]
@@ -220,12 +223,12 @@ With drift signals being computed and persisted, the next layer makes drift dete
 
 The full event pipeline is:
 ```
-Drift Job → SQLite → /metrics → Prometheus → Alert Rules → Alertmanager → /webhook/drift → Structured Event
+Drift Job → RDS → /metrics → Prometheus → Alert Rules → Alertmanager → /webhook/drift → Structured Event
 ```
 
 **Metric Exposure (`/metrics`)**
 
-The drift computation is intentionally decoupled from metric serving. The drift job runs separately and writes its result to a dedicated `drift.db` SQLite database. The `/metrics` endpoint simply reads the latest persisted value and serves it in Prometheus-compatible plain text format — ensuring Prometheus scrapes never trigger expensive recomputation.
+The drift computation is intentionally decoupled from metric serving. The drift job runs separately and writes its result to the `drift_metrics` table in RDS. The `/metrics` endpoint simply reads the latest persisted value and serves it in Prometheus-compatible plain text format — ensuring Prometheus scrapes never trigger expensive recomputation.
 
 A single Gauge metric is exposed:
 
@@ -288,7 +291,7 @@ This event schema is the integration point for all downstream consumers. Today i
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
 flowchart LR
-    DriftJob[Drift Job] --> DriftDB[(drift.db)]
+    DriftJob[Drift Job] --> DriftDB[(RDS Postgres<br/>drift_metrics)]
     DriftDB --> Metrics[GET /metrics]
     Metrics --> Prometheus[Prometheus\n scrape every 15s]
     Prometheus --> AlertRules[Alert Rules\nDriftWarning / DriftCritical]
@@ -344,7 +347,7 @@ flowchart TD
 -   **Safe Shadow Deployment**: A robust mechanism for deploying and evaluating new model versions in production without risk:
     -   **Dual Model Setup**: Primary and Shadow models are loaded at startup.
     -   **Graceful Degradation**: Shadow model loading and execution are wrapped in `try/except` blocks; failures do not impact the primary service.
-    -   **Structured Logging**: Detailed metrics on disagreement, score differences, and latencies for both primary and shadow models are logged to a dedicated SQLite database, enabling offline analysis and promotion readiness evaluation.
+    -   **Structured Logging**: Disagreement, score differences and per-model latencies are logged to RDS against the deployed model version. This is not bookkeeping — it is exactly the evidence the promotion gate queries to decide whether a shadow is safe to promote.
 
 ### Kubernetes Orchestration on EKS
 
@@ -647,15 +650,40 @@ ASIE provides a robust foundation for building and operating reliable ML systems
 
 ASIE transforms the development of sentiment analysis models into a mature, software-engineered process, ready for demanding production environments.
 
-## 🚧 Work in Progress
+## 📍 Project Status
 
-ASIE is continuously evolving to incorporate advanced MLOps practices and enhance its production readiness.
+**Complete and verified on a live AWS cluster (2026-08-14).** The autonomous loop runs end to end: drift detection triggers retraining, a promotion gate decides on evidence whether the result is safe to serve, ArgoCD deploys it through a traffic-shifting canary, and a scheduled job rolls it back if it degrades.
 
-**Now shipped** (Week 11 — AWS migration): the closed retraining loop runs as an Airflow DAG on EKS, gated on the drift score; models live in S3 and are fetched at pod startup rather than baked into the image; inference logs and drift metrics are in RDS Postgres instead of SQLite; and monitoring runs in-cluster via kube-prometheus-stack with Grafana behind a shared ALB.
+### Shipped
 
-Current development efforts are focused on:
+| Phase | Delivered |
+| --- | --- |
+| **AWS migration** | EKS, RDS Postgres, models in S3 fetched at pod startup, DVC remote, kube-prometheus-stack, one shared ALB. `asie.sh` reduced the whole lifecycle to `up` / `pause` / `resume` / `down`. |
+| **GitOps delivery** | ArgoCD app-of-apps; `asie.sh` installs ArgoCD and stops deciding what runs. Deploying is a commit; rolling back is `git revert`. |
+| **Progressive delivery** | Argo Rollouts with ALB weighted target groups, gated on Prometheus analysis at each step. |
+| **Evidence-based promotion** | Offline `eval_f1` decides *better*; online evidence decides *safe*. |
+| **Automated rollback** | A scheduled DAG reverts a degraded primary by committing to git. |
 
-1.  **Production-Real Retraining**: Optimizing the retraining process for production environments, including leveraging GPU jobs, FP16 precision for faster training, and utilizing AWS spot instances for cost-efficiency.
-2.  **Ingress consolidation for the remaining UIs**: the Airflow and MLflow interfaces are still reached with `kubectl port-forward`. Both need their own public base URL to generate working links, which is the ALB's DNS name — so wiring them requires a two-pass deploy (apply Ingress, read the hostname, upgrade both charts).
-3.  **Secrets delivery**: connection strings are currently plain Kubernetes Secrets created at deploy time. External Secrets Operator, with rotation, is the intended upgrade.
-4.  **GitOps Deployment (Automated Model Rollout)**: Implementing GitOps principles with ArgoCD to automate model rollouts, enabling controlled rolling updates and streamlined model promotion across different environments.
+### Measured
+
+- **309 requests** through a canary — 309 × HTTP 200, with the served model version tracking the ALB weights (107/77 at 20%, 21/19 at 50%). Traffic genuinely split, not merely weighted.
+- **200 requests** through a promotion — 200 × HTTP 200, zero downtime.
+- Promotion gate evaluated **1149 real samples**: 0 failures, 0% disagreement, candidate faster than the incumbent at p95.
+- Full rebuild from an empty account in ~25 minutes via `./asie.sh up`.
+
+The result worth reading is the one that wasn't planned: drift crossed the threshold, retraining ran, **the new model lost to the incumbent, and nothing was deployed.** The gate is not decoration.
+
+### Deliberately not done
+
+- **GPU training and spot instances.** Serving p95 is 65–95 ms on CPU at this volume; GPU nodes would cost roughly 10× for latency nobody is waiting on. Spot instances for *training* remain worthwhile if the project resumes.
+- **Ingress for Airflow and MLflow.** Both are still reached with `kubectl port-forward`. Each needs a public base URL to generate working links, which is the ALB's DNS name — so wiring them requires a two-pass deploy.
+- **External Secrets Operator.** Connection strings are Kubernetes Secrets created at deploy time. ESO with rotation is the intended upgrade; the ArgoCD repo credential would still need bootstrapping, since ESO is itself deployed by ArgoCD.
+
+### Known limitations
+
+- There is **no online ground truth** — `true_label` is NULL on every production row. Online evidence can establish that a model is *not broken*; it can never establish that it is *better*. Closing that gap needs labelled feedback, which is the honest next feature.
+- `run_drift_job` cannot execute inside the Airflow image (pandas versus the SQLAlchemy `<2.0` pin Airflow forces). The DAG only reads the latest metric, so it is unaffected today.
+- The Deployment→Rollout migration costs a one-time outage; Argo Rollouts creates a fresh ReplicaSet rather than adopting the existing one.
+- The write-scoped deploy key cannot be path-restricted, so a compromised Airflow could commit anything to the tracked branch.
+
+**AWS is fully torn down.** `scripts/verify-teardown.sh` reports clean. See `DEMO_REPORT.md` for the full end-to-end report and `DEMO_FLOW.md` for a runnable demo script.
