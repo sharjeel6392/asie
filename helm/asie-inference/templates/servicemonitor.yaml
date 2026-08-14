@@ -23,6 +23,17 @@ spec:
   namespaceSelector:
     matchNames:
     - {{ .Release.Namespace }}
+  {{- if .Values.canary.enabled }}
+  # Copies the pod label Argo Rollouts stamps on each ReplicaSet onto every
+  # scraped series. Without it, canary and stable pods are indistinguishable in
+  # Prometheus and the canary AnalysisTemplate can only measure the blended
+  # error rate of both -- where a canary failing 100% of its requests at a 20%
+  # traffic weight moves the overall figure by 20% and comfortably passes any
+  # sane threshold. The label is what makes the analysis specific to the new
+  # version.
+  podTargetLabels:
+    - rollouts-pod-template-hash
+  {{- end }}
   endpoints:
   # By port NAME, matching service.yaml's `name: http`.
   - port: http

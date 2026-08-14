@@ -1,0 +1,41 @@
+{{- if .Values.canary.enabled }}
+# The gate that decides whether a canary step advances or the rollout aborts.
+#
+# Queried against the in-cluster Prometheus from kube-prometheus-stack. The
+# metric is the app's own asie_http_requests_total, which already carries a
+# `status` label from the middleware in src/serving/metrics.py -- no new
+# instrumentation was needed for this.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ .Release.Name }}-success-rate
+spec:
+  args:
+    - name: canary-hash
+  metrics:
+    - name: success-rate
+      # First measurement waits for traffic to accumulate. Evaluating
+      # immediately after a weight change divides by a near-zero denominator
+      # and yields a meaningless ratio -- which, worse, tends to look like
+      # success rather than failure.
+      initialDelay: {{ .Values.canary.analysis.initialDelay }}
+      interval: {{ .Values.canary.analysis.interval }}
+      count: {{ .Values.canary.analysis.count }}
+      successCondition: result[0] >= {{ .Values.canary.analysis.minSuccessRate }}
+      # One bad measurement aborts. A canary is a small, reversible exposure;
+      # the cost of aborting is a rollback nobody notices, and the cost of
+      # waiting for a second opinion is more users served a broken model.
+      failureLimit: 0
+      provider:
+        prometheus:
+          address: {{ .Values.canary.analysis.prometheusAddress }}
+          query: |
+            sum(rate(asie_http_requests_total{
+              status=~"2..",
+              rollouts_pod_template_hash="{{ "{{args.canary-hash}}" }}"
+            }[{{ .Values.canary.analysis.window }}]))
+            /
+            sum(rate(asie_http_requests_total{
+              rollouts_pod_template_hash="{{ "{{args.canary-hash}}" }}"
+            }[{{ .Values.canary.analysis.window }}]))
+{{- end }}

@@ -1,0 +1,53 @@
+# Wave 1 -- must precede the inference chart, which renders a Rollout.
+#
+# Same class of dependency as kube-prometheus-stack owning the ServiceMonitor
+# CRD: this chart owns rollouts.argoproj.io, and syncing inference first fails
+# with "no matches for kind Rollout".
+#
+# Argo Rollouts is a SEPARATE controller from ArgoCD despite the shared name
+# and project. ArgoCD reconciles desired state from git; Rollouts owns the
+# progressive delivery of one workload. Installing one does not give you the
+# other.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-rollouts
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://argoproj.github.io/argo-helm
+      chart: argo-rollouts
+      targetRevision: 2.38.0
+      helm:
+        releaseName: argo-rollouts
+        valueFiles:
+          - $values/gitops/values/argo-rollouts.yaml
+    - repoURL: git@github.com:sharjeel6392/asie.git
+      targetRevision: gitops-deployment
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argo-rollouts
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The controller's namespace is not in eks/namespaces.yaml -- it belongs
+      # to this component rather than to the application stack, so it is
+      # created here instead of being a shared concern.
+      - CreateNamespace=true
+      # The Rollout CRD is large enough to hit the same 262144-byte
+      # client-side apply limit that kube-prometheus-stack does.
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

@@ -84,6 +84,35 @@ initContainer:
   # has no anonymous pull rate limit, unlike Docker Hub.
   image: "public.ecr.aws/aws-cli/aws-cli:latest"
 
+# Progressive delivery. Off by default so the chart still installs as a plain
+# Deployment on a cluster without the Argo Rollouts CRDs; gitops/values turns
+# it on where the controller exists.
+canary:
+  enabled: false
+  # The ALB Ingress whose target-group weights the controller rewrites. Lives
+  # in eks/ingress.yaml, outside this chart.
+  ingressName: asie-inference
+  # Traffic weight ladder. 20 -> 50 -> 100, with an analysis gate after each
+  # increase rather than a fixed pause: a timer only proves that time passed.
+  steps:
+    - setWeight: 20
+    - analysis: true
+    - setWeight: 50
+    - analysis: true
+  analysis:
+    prometheusAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+    # Rate window. 2m against a 30s scrape gives four samples -- enough that
+    # one slow scrape does not swing the ratio.
+    window: 2m
+    initialDelay: 60s
+    interval: 60s
+    count: 3
+    # 0.99, not 1.0. Demanding a perfect success rate makes any single 5xx
+    # from an unrelated cause abort the rollout, and this endpoint returns 422
+    # for malformed input by design -- those are 4xx and already excluded, but
+    # the margin matters for genuine transients.
+    minSuccessRate: 0.99
+
 # Drain window before the container stops, in seconds. Sized against the ALB's
 # target deregistration, not against application shutdown: the app has nothing
 # to flush, but the load balancer keeps routing to a deregistering target for a

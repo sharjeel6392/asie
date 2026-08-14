@@ -1,0 +1,45 @@
+{{- if .Values.canary.enabled }}
+# Two extra Services the Rollout controller owns.
+#
+# Both start as ordinary selectors on `app`, and Argo Rollouts injects a
+# rollouts-pod-template-hash selector into each so that one resolves to the new
+# ReplicaSet and the other to the old. That is what gives the ALB two distinct
+# target groups to weight -- without them there is nothing to split traffic
+# between, since a single Service would load-balance across both versions
+# indiscriminately at whatever ratio the replica counts happened to produce.
+#
+# The original {{ .Release.Name }} Service stays as the rootService: it is what
+# the Ingress forwards to, and Rollouts rewrites that forward into a weighted
+# action across these two.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-canary
+  labels:
+    app: {{ .Release.Name }}
+    asie.io/rollout-role: canary
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-stable
+  labels:
+    app: {{ .Release.Name }}
+    asie.io/rollout-role: stable
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+{{- end }}

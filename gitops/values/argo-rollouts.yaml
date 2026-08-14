@@ -1,0 +1,20 @@
+# Values for the argo-rollouts chart.
+controller:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+dashboard:
+  # The Rollouts UI. Off: it would need its own Ingress path on the shared ALB
+  # for a view that `kubectl argo rollouts get rollout` already gives from the
+  # terminal. Worth enabling for the Week 14 demo if a visual is wanted.
+  enabled: false
+
+# The controller needs to read the ALB Ingress and rewrite its
+# target-group weights to shift traffic. The chart's default ClusterRole
+# already covers ingresses; this records why that permission matters rather
+# than changing it.

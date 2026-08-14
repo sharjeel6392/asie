@@ -4,9 +4,20 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: {{ .Release.Name }}
 spec:
+  # Must follow whichever workload object actually exists. Under canary
+  # delivery the Deployment is replaced by a Rollout, and an HPA still aimed at
+  # a Deployment would silently target a missing object: it reports
+  # FailedGetScale and never scales, which surfaces as an outage under load
+  # rather than as a deployment error. Argo Rollouts is designed to be an HPA
+  # scale target and implements the scale subresource for exactly this.
   scaleTargetRef:
+    {{- if .Values.canary.enabled }}
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    {{- else }}
     apiVersion: apps/v1
     kind: Deployment
+    {{- end }}
     name: {{ .Release.Name }}
   minReplicas: {{ .Values.hpa.minReplicas}}
   maxReplicas: {{ .Values.hpa.maxReplicas }}

@@ -66,3 +66,13 @@ model:
 # the model version. Bump the value to re-run the zero-downtime verification.
 podAnnotations:
   asie.io/rollout-test: "1"
+
+# Progressive delivery. Deliberately still FALSE: the Rollout, its ALB traffic
+# routing and the Prometheus analysis query have all been rendered and parsed
+# but never run against a cluster. Enabling them blind on the next `up` risks
+# an inference service that never becomes available at all -- a Rollout that
+# fails to progress serves nothing, which is a worse failure than an extra
+# step. Flipping this to true is itself the Day 5 verification, done as a
+# watched one-line commit with the cluster in front of me.
+canary:
+  enabled: false
