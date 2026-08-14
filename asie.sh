@@ -23,6 +23,16 @@ MONITORING_NAMESPACE="monitoring"
 
 MONITORING_RELEASE="kube-prometheus-stack"
 
+# GitOps control plane. ArgoCD owns every workload from here on; this script
+# only installs ArgoCD itself and points it at the repo.
+ARGOCD_NAMESPACE="argocd"
+ARGOCD_CHART_VERSION="7.7.11"
+ARGOCD_REPO_SECRET="asie-repo-creds"
+# Must match repoURL in gitops/apps/*.yaml and gitops/bootstrap/root-app.yaml.
+# ArgoCD matches a credential to an Application by URL prefix, so a mismatch
+# here means the credential silently does not apply.
+REPO_URL="https://github.com/sharjeel6392/asie.git"
+
 INFERENCE_RELEASE="asie"
 AIRFLOW_RELEASE="airflow"
 # Must be exactly "asie-mlflow" -- eks/airflow-values.yaml and
@@ -185,24 +195,21 @@ build_push_images() {
     docker push $MLFLOW_ECR_URI:latest
 }
 
-# The image tag to deploy. `up` builds and pushes $GIT_SHA, but `resume`
-# doesn't build at all -- if HEAD has moved since the last push, $GIT_SHA
-# names a tag that was never pushed and every pod would sit in ImagePullBackOff.
-# Fall back to :latest when the commit's tag isn't actually in ECR.
-resolve_image_tag() {
-    if aws ecr describe-images --repository-name $INFERENCE_ECR_REPO --region $REGION \
-        --image-ids imageTag=$GIT_SHA > /dev/null 2>&1; then
-        DEPLOY_TAG=$GIT_SHA
-    else
-        echo "No image tagged $GIT_SHA in ECR; falling back to :latest."
-        DEPLOY_TAG=latest
-    fi
-    echo "Deploying image tag: $DEPLOY_TAG"
-}
+# ---------------------------------------------------------------------------
+# BOOTSTRAP -- everything below hands off to ArgoCD
+#
+# deploy_workloads() used to live here: five `helm upgrade --install` calls and
+# three `kubectl apply`s that WERE the definition of what ran in the cluster.
+# Under GitOps that definition lives in gitops/, and this script must not also
+# deploy -- two controllers reconciling the same releases fight, and ArgoCD
+# wins on a delay, so the symptom is a helm change that "works" and then
+# silently reverts minutes later.
+#
+# What remains is the irreducible bootstrap: ArgoCD cannot install itself, and
+# the secrets below cannot live in git.
+# ---------------------------------------------------------------------------
 
-deploy_workloads() {
-    resolve_image_tag
-
+bootstrap_secrets() {
     step "Ensuring the Airflow webserver secret key exists (fixed, not chart-regenerated -- regenerating invalidates all sessions)..."
     kubectl -n $AIRFLOW_NAMESPACE get secret airflow-webserver-secret > /dev/null 2>&1 || \
         kubectl -n $AIRFLOW_NAMESPACE create secret generic airflow-webserver-secret \
@@ -215,47 +222,84 @@ deploy_workloads() {
             --from-literal=admin-user=admin \
             --from-literal=admin-password=$(openssl rand -base64 18 | tr -d '/+=')
 
-    step "Deploying MLflow (before Airflow -- the DAG's env points at its Service DNS)..."
-    helm upgrade --install $MLFLOW_RELEASE ./helm/asie-mlflow \
-        --namespace $MLFLOW_NAMESPACE \
-        --set image.repository=$MLFLOW_ECR_URI \
-        --set image.tag=$DEPLOY_TAG
+    # TODO (Day 3, blocked on a Secrets Manager entry): these two move to
+    # External Secrets Operator, at which point this function disappears and
+    # the last imperative step in the deploy path goes with it.
+}
 
-    step "Deploying Airflow..."
-    helm repo add apache-airflow https://airflow.apache.org > /dev/null 2>&1 || true
-    helm repo update apache-airflow > /dev/null
-    helm upgrade --install $AIRFLOW_RELEASE apache-airflow/airflow \
-        --version 1.16.0 \
-        --namespace $AIRFLOW_NAMESPACE \
-        -f eks/airflow-values.yaml \
-        --set images.airflow.repository=$AIRFLOW_ECR_URI \
-        --set images.airflow.tag=$DEPLOY_TAG
+ensure_repo_credential() {
+    # ArgoCD cannot read a private repository without a credential, and the
+    # failure is quiet in the worst way: the Application appears, reports
+    # "ComparisonError", and nothing ever deploys. Better to stop here with an
+    # instruction than to leave a cluster that looks provisioned and serves
+    # nothing.
+    if kubectl -n $ARGOCD_NAMESPACE get secret $ARGOCD_REPO_SECRET > /dev/null 2>&1; then
+        echo "Repository credential present."
+        return
+    fi
 
-    step "Deploying kube-prometheus-stack (before inference -- it owns the ServiceMonitor CRD)..."
-    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts > /dev/null 2>&1 || true
-    helm repo update prometheus-community > /dev/null
-    helm upgrade --install $MONITORING_RELEASE prometheus-community/kube-prometheus-stack \
-        --namespace $MONITORING_NAMESPACE \
-        -f eks/monitoring-values.yaml \
+    cat >&2 <<EOF
+
+ERROR: ArgoCD has no credential for $REPO_URL.
+
+  This repo is private, so ArgoCD cannot read desired state without one.
+  Create a READ-ONLY deploy key on the GitHub repo, then:
+
+    kubectl -n $ARGOCD_NAMESPACE create secret generic $ARGOCD_REPO_SECRET \\
+      --from-literal=type=git \\
+      --from-literal=url=$REPO_URL \\
+      --from-file=sshPrivateKey=/path/to/deploy_key \\
+      --dry-run=client -o yaml | kubectl label -f- --local -o yaml \\
+      argocd.argoproj.io/secret-type=repository | kubectl apply -f -
+
+  The label is required -- ArgoCD only discovers repository secrets carrying
+  it, and without it the secret exists and is ignored.
+
+  Then re-run this command. Everything before this point is idempotent, so
+  it will skip straight back to here.
+
+EOF
+    exit 1
+}
+
+install_argocd() {
+    step "Installing ArgoCD (the one workload git cannot bootstrap)..."
+    helm repo add argo https://argoproj.github.io/argo-helm > /dev/null 2>&1 || true
+    helm repo update argo > /dev/null
+
+    kubectl create namespace $ARGOCD_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+
+    # Pinned: an unpinned chart means the GitOps controller silently upgrades
+    # itself on the next `up`, which is a migration wearing a sync's clothes.
+    helm upgrade --install argocd argo/argo-cd \
+        --version $ARGOCD_CHART_VERSION \
+        --namespace $ARGOCD_NAMESPACE \
+        -f gitops/bootstrap/argocd-values.yaml \
         --wait --timeout 10m
+}
 
-    step "Applying PrometheusRule and Grafana dashboard..."
-    kubectl apply -f eks/monitoring-rules.yaml
-    kubectl apply -f eks/grafana-dashboard-asie.yaml
+register_root_app() {
+    step "Registering the app-of-apps root Application..."
+    # The only manifest applied by hand. Everything else is a child of this.
+    kubectl apply -f gitops/bootstrap/root-app.yaml
 
-    step "Deploying inference application..."
-    # serviceMonitor.enabled is off by default so the chart installs on a
-    # cluster without the Prometheus Operator; safe to turn on here because
-    # the stack above has just installed the CRD.
-    helm upgrade --install $INFERENCE_RELEASE ./helm/asie-inference \
-        --namespace $INFERENCE_NAMESPACE \
-        --set image.repository=$INFERENCE_ECR_URI \
-        --set image.tag=$DEPLOY_TAG \
-        --set serviceAccount.name=asie-irsa-sa \
-        --set serviceMonitor.enabled=true
-
-    step "Applying the shared ALB Ingress..."
-    kubectl apply -f eks/ingress.yaml
+    step "Waiting for ArgoCD to sync the workloads (this is the deploy)..."
+    # Sync is asynchronous, so `up` would otherwise return before anything is
+    # running and wait_for_alb would look at an Ingress that does not exist.
+    for i in $(seq 1 60); do
+        synced=$(kubectl -n $ARGOCD_NAMESPACE get applications.argoproj.io \
+                 -o jsonpath='{range .items[*]}{.status.sync.status}{"\n"}{end}' 2>/dev/null \
+                 | grep -c "Synced" || true)
+        total=$(kubectl -n $ARGOCD_NAMESPACE get applications.argoproj.io \
+                --no-headers 2>/dev/null | wc -l || echo 0)
+        if [ "$total" -gt 0 ] && [ "$synced" -eq "$total" ]; then
+            echo "All $total Applications synced."
+            break
+        fi
+        echo "  $synced/$total synced; waiting..."
+        sleep 20
+    done
+    kubectl -n $ARGOCD_NAMESPACE get applications.argoproj.io
 }
 
 wait_for_alb() {
@@ -284,7 +328,33 @@ wait_for_alb() {
 # TEAR-DOWN PHASES
 # ---------------------------------------------------------------------------
 
+stop_gitops() {
+    # MUST run before anything below deletes a workload. Every Application sets
+    # selfHeal: true, so a `helm uninstall` while ArgoCD is running is not a
+    # teardown -- it is a drift event, and ArgoCD reinstalls the release within
+    # minutes. The teardown would appear to succeed and leave a running cluster.
+    step "Removing ArgoCD so nothing self-heals during teardown..."
+
+    # Strip the resources-finalizer before deleting. The finalizer makes
+    # Application deletion CASCADE to the workloads it owns, which is right for
+    # normal operation and wrong here: the teardown below is deliberately
+    # ordered -- Ingress first, drained, alone -- and a cascade would delete the
+    # Ingress concurrently with everything else, orphaning the shared ALB and
+    # hanging `terraform destroy` on subnets whose ENIs are still attached.
+    # Orphan the workloads instead and let the ordered teardown do the work.
+    for app in $(kubectl -n $ARGOCD_NAMESPACE get applications.argoproj.io -o name 2>/dev/null); do
+        kubectl -n $ARGOCD_NAMESPACE patch "$app" --type merge \
+            -p '{"metadata":{"finalizers":null}}' > /dev/null 2>&1 || true
+    done
+    kubectl -n $ARGOCD_NAMESPACE delete applications.argoproj.io --all --ignore-not-found > /dev/null 2>&1 || true
+
+    helm uninstall argocd -n $ARGOCD_NAMESPACE > /dev/null 2>&1 || true
+    kubectl delete namespace $ARGOCD_NAMESPACE --ignore-not-found > /dev/null 2>&1 || true
+}
+
 teardown_workloads() {
+    stop_gitops
+
     # The Ingress goes FIRST and on its own. It owns the shared ALB, whose ENIs
     # sit in the VPC subnets -- deleting the namespace out from under it can
     # orphan the load balancer, after which terraform destroy hangs trying to
@@ -393,15 +463,18 @@ usage() {
     cat <<EOF
 Usage: ./asie.sh <command>
 
-  up       Provision infrastructure, build and push images, deploy everything.
-           Safe to re-run; every step is idempotent.
+  up       Provision infrastructure, build and push images, install ArgoCD and
+           hand off. ArgoCD deploys the workloads from gitops/ -- this script
+           no longer decides what runs. Safe to re-run; every step is
+           idempotent.
 
   pause    Delete the EKS cluster and workloads. KEEPS S3, ECR, RDS and the
            VPC, so no data is lost. Removes most of the hourly cost (the
            nodes and the control plane); NAT gateway and RDS keep running.
 
-  resume   Rebuild the cluster and redeploy on top of the surviving data.
-           Skips Terraform and the image build, since neither was torn down.
+  resume   Rebuild the cluster on top of the surviving data and re-register
+           ArgoCD, which redeploys from git. Skips Terraform and the image
+           build, since neither was torn down.
 
   down     Destroy EVERYTHING, including all data in S3 and RDS.
            Irreversible. Asks for confirmation first.
@@ -424,7 +497,10 @@ case "$1" in
         bootstrap_db
         upload_models
         build_push_images
-        deploy_workloads
+        bootstrap_secrets
+        install_argocd
+        ensure_repo_credential
+        register_root_app
         wait_for_alb
         echo ""
         echo "Setup complete."
@@ -457,7 +533,10 @@ EOF
         ensure_namespaces
         create_irsa
         bootstrap_db
-        deploy_workloads
+        bootstrap_secrets
+        install_argocd
+        ensure_repo_credential
+        register_root_app
         wait_for_alb
         echo ""
         echo "Resume complete."
