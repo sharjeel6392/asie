@@ -526,6 +526,21 @@ destroy_infra() {
     # ECR repos and the S3 bucket are Terraform-owned and carry
     # force_delete/force_destroy, so this completes even when they hold
     # images/objects rather than failing halfway through.
+    # EKS creates its own cluster security group inside the VPC, and it
+    # survives `eksctl delete cluster` -- it is owned by neither eksctl nor
+    # Terraform, so nothing deletes it and it blocks the VPC with
+    #   DependencyViolation: The vpc '...' has dependencies and cannot be
+    #   deleted
+    # after every other resource is gone. Terraform reports a failed destroy
+    # over what is really one stray security group.
+    step "Removing the EKS-managed cluster security group (blocks VPC deletion)..."
+    for sg in $(aws ec2 describe-security-groups --region "$REGION" \
+                  --filters "Name=group-name,Values=eks-cluster-sg-${CLUSTER_NAME}-*" \
+                  --query 'SecurityGroups[].GroupId' --output text 2>/dev/null | tr -d '\r'); do
+        aws ec2 delete-security-group --region "$REGION" --group-id "$sg" > /dev/null 2>&1 \
+            && echo "  deleted $sg" || true
+    done
+
     step "Destroying AWS infrastructure with Terraform..."
     cd aws-provision
 
