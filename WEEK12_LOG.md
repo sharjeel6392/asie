@@ -47,3 +47,33 @@ Defect fixes first — both are prerequisites, not cleanup. The promotion gate c
 **A test caught a real bug.** `_percentile` used `round()`, and Python's banker's rounding turned rank 95.5 into 96, returning the 96th value for p95 of 100 samples. Fixed to `ceil`, which is the nearest-rank definition.
 
 **Not done today:** the DAG task that commits the promoted version to git. It needs a repo deploy key in the cluster, which lands with the ArgoCD wiring on Day 3.
+
+**Follow-on (same day):** S3 lifecycle expiry for the now-append-only `models/` prefix — 90 days, chosen against the rollback window rather than storage price. Rolling back to something that has not served since last quarter is a re-deploy, not a rollback. `terraform validate` passes; not applied.
+
+---
+
+## Day 3 — GitOps with ArgoCD 🔵 In progress
+
+**Notion deliverables:** ArgoCD installation · Git repository configuration · automatic synchronization.
+
+### Plan
+
+Blocked on two decisions (cluster up? repo credential type?), so this day splits: everything that does not need a live cluster first, then the install itself.
+
+1. Cut `asie.sh` back to bootstrap-only — the blocking correctness issue, since until it is done both `asie.sh` and ArgoCD can deploy and will fight.
+2. External Secrets manifests for the two imperative secrets, with a placeholder ARN.
+3. Install + first sync — needs the cluster.
+
+### Outcome so far
+
+**`asie.sh` no longer deploys.** `deploy_workloads()` removed; `bootstrap_secrets`, `install_argocd`, `ensure_repo_credential`, `register_root_app` replace it in both `up` and `resume`. `register_root_app` waits for Applications to reach Synced, because sync is asynchronous and `up` would otherwise return before anything was running.
+
+**Teardown was the bigger find.** With `selfHeal: true` on every Application, the existing `helm uninstall` path had silently stopped being a teardown — ArgoCD would reinstall each release within minutes and the script would report success over a still-running cluster. `stop_gitops()` now runs first, and strips the `resources-finalizer` rather than letting deletion cascade: cascade is correct in normal operation but would delete the Ingress concurrently with everything else, orphaning the shared ALB and hanging `terraform destroy` on subnets with live ENIs. The existing carefully-ordered teardown still does the deleting.
+
+`bash -n` passes. **Nothing here has been run against a cluster** — there isn't one up.
+
+### Blocked on
+
+1. **Is the cluster up?** Day 3's remainder is install + first sync; `./asie.sh up` is real spend and the user's call.
+2. **Repo credential** — read-only deploy key vs PAT. A GitHub-side action nobody else can do.
+3. **A second, write-scoped credential** for the promotion commit from Airflow. Deliberately separate, so a compromised ArgoCD cannot rewrite desired state.
