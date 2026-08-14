@@ -7,4 +7,8 @@
 images:
   airflow:
     repository: 818111885210.dkr.ecr.ap-south-1.amazonaws.com/asie-airflow-repo
-    tag: latest
+    # Pinned to the commit that added the rollback/values-writer modules and
+    # the auto-rollback DAG. "latest" is mutable, so a rebuilt image under the
+    # same tag leaves the pod spec unchanged and Kubernetes never rolls it --
+    # the new code would sit in ECR while the old pods kept running.
+    tag: 8b912b6
