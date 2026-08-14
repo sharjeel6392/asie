@@ -122,6 +122,18 @@ DRIFT_UPDATED_METRIC_DESCRIPTION = (
 )
 DRIFT_THRESHOLD = 0.5  # matches Prometheus DriftWarning (prometheus/alerts.yml)
 
+# Automated rollback thresholds — DEPLOYMENT_ARCHITECTURE.md §5, Layer 2.
+ROLLBACK_ERROR_RATE_THRESHOLD = 0.05   # 5% of /predict returning 5xx
+ROLLBACK_MIN_REQUESTS = 0.05           # req/s floor; below this the ratio is
+                                       # noise and every quiet period would
+                                       # look like an outage
+ROLLBACK_MAX_AGE_HOURS = 6.0           # only roll back changes that are still
+                                       # recent. A model healthy for days that
+                                       # suddenly errors is far more likely a
+                                       # platform failure than a model defect,
+                                       # and a rollback would not fix it -- it
+                                       # would just add a deploy to an incident
+
 # Promotion gate thresholds — DEPLOYMENT_ARCHITECTURE.md §4.
 # The online gate can only establish that a candidate is SAFE; "better" is
 # decided offline by eval_f1, because true_label is NULL on every production
