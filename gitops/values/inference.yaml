@@ -56,7 +56,7 @@ model:
   # prefixes, which were copied to these run_id-keyed ones. Left "unset" these
   # would have pointed the initContainer at a nonexistent s3://.../models/unset/
   # and every inference pod would have failed at Init on first sync.
-  primaryVersion: "286aecc660884060ac72f46ce3c4ab29"   # eval_f1 0.9824 (Day 4 rollout test)
+  primaryVersion: "ddb90ee0a2654f5cac1bff3f66fe76f3"   # eval_f1 0.9715
   # Note this shadow scores HIGHER offline than primary (0.9824 vs 0.9715), so
   # it is a live promotion candidate the moment the gate has enough online
   # evidence. Exactly the case Day 2's policy exists to decide.
