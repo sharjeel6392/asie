@@ -85,8 +85,35 @@ provision_infra() {
 
 create_cluster() {
     step "Creating EKS cluster with eksctl..."
-    if eksctl get cluster --name $CLUSTER_NAME --region $REGION > /dev/null 2>&1; then
-        echo "EKS cluster already exists. Skipping creation."
+
+    # Status, not mere existence. `eksctl get cluster` succeeds for a cluster
+    # in DELETING just as it does for a healthy one, so the old existence check
+    # reported "already exists, skipping creation" for a cluster that was
+    # disappearing -- and then handed every later step a control plane that
+    # vanished underneath it. Hit immediately by running `pause` and `up`
+    # back to back, which is the obvious way to test a rebuild.
+    local status
+    status=$(aws eks describe-cluster --name $CLUSTER_NAME --region $REGION \
+             --query 'cluster.status' --output text 2>/dev/null | tr -d '\r')
+    [ -z "$status" ] && status="ABSENT"
+
+    if [ "$status" = "DELETING" ]; then
+        echo "Cluster is DELETING; waiting for it to finish before recreating..."
+        for _ in $(seq 1 60); do
+            sleep 30
+            status=$(aws eks describe-cluster --name $CLUSTER_NAME --region $REGION \
+                     --query 'cluster.status' --output text 2>/dev/null | tr -d '\r')
+            [ -z "$status" ] && { status="ABSENT"; break; }
+            echo "  still $status..."
+        done
+        if [ "$status" = "DELETING" ]; then
+            echo "Cluster still DELETING after 30 minutes; aborting rather than guessing." >&2
+            exit 1
+        fi
+    fi
+
+    if [ "$status" = "ACTIVE" ]; then
+        echo "EKS cluster already exists and is ACTIVE. Skipping creation."
     else
         # Fill eks-cluster.yaml's placeholders from Terraform outputs.
         ./eks/render-cluster-config.sh
