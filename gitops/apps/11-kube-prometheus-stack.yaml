@@ -51,6 +51,17 @@ spec:
       # The chart's CRDs are large and slow; give the initial sync room rather
       # than letting a 5-minute default mark a healthy install as degraded.
       - Replace=false
-  # CRD establishment plus Prometheus StatefulSet startup routinely exceeds a
-  # single sync attempt on a small cluster. Retry rather than surfacing a red
-  # Application that is actually just still coming up.
+    # CRD establishment plus Prometheus StatefulSet startup routinely exceeds a
+    # single sync attempt on a small cluster. Retry rather than surfacing a red
+    # Application that is actually just still coming up.
+    #
+    # Nested inside syncPolicy, not beside it: spec.retry is not a field on the
+    # Application CRD, so the API server prunes it -- the policy never applies
+    # and the pruned field reads as permanent drift from git, holding the
+    # app-of-apps root OutOfSync forever.
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
