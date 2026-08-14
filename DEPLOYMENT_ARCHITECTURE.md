@@ -114,11 +114,11 @@ Four layers, cheapest first.
 
 ---
 
-## 6. Two defects this design surfaced
+## 6. Two defects this design surfaced — both fixed on Day 2
 
 Both block the rollback strategy above. Neither is visible until you try to write down what "roll back" means.
 
-### 6.1 Model rollback is currently impossible, and the version annotation does not fix it
+### 6.1 Model rollback is currently impossible, and the version annotation does not fix it — ✅ FIXED (Day 2)
 
 `export_models()` uploads to a **fixed** prefix: `s3://…/models/primary/model`, `…/shadow/model`. Every export overwrites the previous one in place. The initContainer syncs `s3://…/models/` wholesale into the pod.
 
@@ -126,7 +126,7 @@ So reverting `model.version` in git would restart the pods, they would re-sync t
 
 **Fix:** make the S3 layout versioned — `models/<run_id>/{model,tokenizer}/` — and have the initContainer sync only the prefix named by the pod's `model.version`. Exports become append-only, and `model.version` becomes a real content pointer rather than a label. This is a prerequisite for Day 6, not a nice-to-have, and it changes `export_model.py`, the chart's initContainer command, and the S3 lifecycle rule (old versions need an expiry, or the bucket grows without bound at ~961 MB per retrain).
 
-### 6.2 The version recorded in `inference_logs` is a hardcoded constant
+### 6.2 The version recorded in `inference_logs` is a hardcoded constant — ✅ FIXED (Day 2)
 
 `src/constants/__init__.py` defines `PRIMARY_MODEL_VERSION = "v_01"`, `SHADOW_MODEL_VERSION = "v_02"`, `SERVED_MODEL_VERSION = "v0"`, and `/predict` writes those literals into every row.
 
@@ -153,6 +153,6 @@ This also means every drift and disagreement row recorded to date carries a vers
 
 ## 8. Open questions
 
-- **Shadow soak time.** The gate specifies ≥1000 samples but no minimum duration. At low traffic, 1000 samples might span an hour of one workload pattern. A minimum wall-clock window (24h?) would be more honest, at the cost of a slower demo.
+- ~~**Shadow soak time.**~~ **Resolved Day 2:** `PROMOTION_MIN_SOAK_HOURS = 24.0`, enforced from the span between the first and last row for that shadow version. Samples and soak are checked independently, since either alone is satisfiable without the other.
 - **Concurrent retrains.** The DAG is `@daily`. If a promotion is still soaking when the next retrain registers a new shadow, the second overwrites the first and the online evidence gathered so far is orphaned. Needs either a lock or an explicit "shadow is soaking, skip" branch.
 - **Bucket growth** under versioned exports (6.1) — expiry policy needs a number.

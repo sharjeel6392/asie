@@ -36,13 +36,21 @@ serviceMonitor:
   # kube-prometheus-stack (wave 1) has already installed the CRD.
   enabled: true
 
-# Model version currently promoted to primary.
+# THE MODEL DEPLOY LEVER. Each value is an MLflow run_id and the S3 prefix
+# under models/ holding those weights.
 #
-# This is the second half of the rollout mechanism, and the fix for the gap
-# recorded in GITOPS_AND_OPTIMIZATION_PLAN.md §1.2: the model artifact lives in
-# S3 and is fetched by the initContainer at pod startup, so replacing it in S3
-# changes nothing for pods that are already running. Writing the promoted
-# version here changes the POD TEMPLATE, which is what actually forces a
-# rolling update. Without it, a retrain lands in S3 and serving never notices.
+# This is the fix for the gap in DEPLOYMENT_ARCHITECTURE.md §1: the model lives
+# in S3 and is fetched by the initContainer at pod startup, so replacing it in
+# S3 changes nothing for pods already running. Writing the version here changes
+# the POD TEMPLATE, which is what forces a rolling update.
+#
+# Promotion is: shadowVersion is proven by the online gate, then copied into
+# primaryVersion and committed. Rollback is `git revert` of that commit — which
+# works only because exports are keyed by run_id and never overwritten (§6.1).
+#
+# "unset" until the first real export runs under the versioned layout; the
+# initContainer will fail loudly on a nonexistent prefix rather than silently
+# serving whatever happened to be in the bucket.
 model:
-  version: "bootstrap"
+  primaryVersion: "unset"
+  shadowVersion: "unset"

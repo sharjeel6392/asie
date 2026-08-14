@@ -20,7 +20,8 @@ spec:
         # every pod kept serving the old weights. Stamping the promoted version
         # onto the pod template changes the pod spec, which is what actually
         # triggers a rolling update. The promotion step writes this value.
-        asie.io/model-version: {{ .Values.model.version | quote }}
+        asie.io/primary-model-version: {{ .Values.model.primaryVersion | quote }}
+        asie.io/shadow-model-version: {{ .Values.model.shadowVersion | quote }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -31,7 +32,29 @@ spec:
         image: {{ .Values.initContainer.image }}
         # IRSA on the pod's service account applies to init containers too —
         # no separate credential wiring needed here.
-        command: ["aws", "s3", "sync", "s3://$(MODEL_S3_URI)/", "/models/", "--only-show-errors"]
+        # Fetch exactly the two versions this pod is meant to run, not the
+        # whole models/ bucket prefix. Since exports are keyed by run_id and
+        # append-only, syncing everything would grow with every retrain ever
+        # performed -- and would defeat rollback, because the pod would no
+        # longer be pinned to specific content.
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            set -e
+            echo "Fetching primary model: $PRIMARY_MODEL_VERSION"
+            aws s3 sync "s3://$MODEL_S3_URI/$PRIMARY_MODEL_VERSION/" /models/primary/ --only-show-errors
+            if [ -z "$SHADOW_MODEL_VERSION" ] || [ "$SHADOW_MODEL_VERSION" = "unset" ]; then
+              echo "No shadow version set; skipping (shadow inference is optional)."
+            elif [ "$SHADOW_MODEL_VERSION" = "$PRIMARY_MODEL_VERSION" ]; then
+              # Bootstrap case: register_shadow_model() seeds primary from the
+              # first shadow, so both point at one run. Copy locally rather
+              # than paying a second ~250 MB download for identical bytes.
+              echo "Shadow == primary; copying locally."
+              cp -r /models/primary /models/shadow
+            else
+              echo "Fetching shadow model: $SHADOW_MODEL_VERSION"
+              aws s3 sync "s3://$MODEL_S3_URI/$SHADOW_MODEL_VERSION/" /models/shadow/ --only-show-errors
+            fi
         envFrom:
         - configMapRef:
             name: {{ .Release.Name }}

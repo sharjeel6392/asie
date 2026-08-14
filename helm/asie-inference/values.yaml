@@ -41,12 +41,19 @@ aws:
 models:
   s3Uri: "asie-platform-818111885210/models"
 
-# Promoted model version, stamped onto the pod template as an annotation so a
-# model promotion forces a rollout (see templates/deployment.yaml). Overridden
-# by gitops/values/inference.yaml; the default here keeps the chart renderable
-# standalone.
+# Deployed model versions. Each is an MLflow run_id, which is also the S3
+# prefix under models/ holding that model's weights -- one identifier from
+# training through to the inference_logs row.
+#
+# Two jobs at once: the initContainer fetches exactly these prefixes, and both
+# are stamped onto the pod template as annotations so changing either forces a
+# rolling update (see templates/deployment.yaml). Overridden by
+# gitops/values/inference.yaml; defaults keep the chart renderable standalone.
 model:
-  version: "unset"
+  primaryVersion: "unset"
+  # Empty or "unset" disables shadow inference entirely -- the app already
+  # treats a missing shadow model as optional.
+  shadowVersion: "unset"
 
 # Secret (created by eks/db-bootstrap/create-app-secrets.sh) holding the
 # Postgres connection string for asie_app.
