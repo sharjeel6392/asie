@@ -2,15 +2,8 @@ FROM apache/airflow:2.10.5-python3.12
 
 USER root
 
-# git is required, not incidental: src/gitops/values_writer.py shells out to it
-# to clone, commit and push the deployed model version, which is how the
-# retraining pipeline deploys a shadow and how asie_auto_rollback reverts a bad
-# primary. Under GitOps the commit IS the deploy, so without git in this image
-# the pipeline can train, register and export a model and then silently fail to
-# deploy any of it. ssh is already present in the base image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -52,4 +45,21 @@ COPY --chown=airflow:root data/financial_phrasebank.parquet.dvc ./data/
 # image-only, so the checked-in .dvc/config keeps working normally on a dev
 # machine, where the repo genuinely is under git.
 RUN printf '[core]\n    no_scm = true\n' > ./.dvc/config.local
+# git, installed LATE on purpose. It is required, not incidental:
+# src/gitops/values_writer.py shells out to it to clone, commit and push the
+# deployed model version -- and under GitOps that commit IS the deploy. Without
+# git the pipeline trains, registers and exports a model and then silently
+# fails to deploy any of it, failing with
+#   PermissionError: [Errno 13] Permission denied: 'git'
+# which reads like a filesystem problem rather than a missing binary.
+#
+# Placed after the pip layers rather than in the apt block at the top so adding
+# it does not invalidate the torch/transformers install above -- that rebuild
+# is ~15 minutes for a package that takes seconds. ssh is already in the base
+# image.
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+USER airflow
+
 COPY --chown=airflow:root airflow-home/dags/ /opt/airflow/dags/
