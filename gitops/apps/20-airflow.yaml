@@ -37,9 +37,14 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
-  retry:
-    limit: 5
-    backoff:
-      duration: 30s
-      factor: 2
-      maxDuration: 5m
+    # retry belongs INSIDE syncPolicy. As a sibling of it (spec.retry) the
+    # field does not exist, so the API server prunes it: the policy silently
+    # never applied, AND the pruned field showed as permanent drift against
+    # git, leaving the app-of-apps root OutOfSync forever. With selfHeal on,
+    # that is a standing re-sync loop over a difference that can never close.
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

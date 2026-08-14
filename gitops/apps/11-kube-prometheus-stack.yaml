@@ -54,9 +54,3 @@ spec:
   # CRD establishment plus Prometheus StatefulSet startup routinely exceeds a
   # single sync attempt on a small cluster. Retry rather than surfacing a red
   # Application that is actually just still coming up.
-  retry:
-    limit: 5
-    backoff:
-      duration: 30s
-      factor: 2
-      maxDuration: 5m
