@@ -105,6 +105,36 @@ resource "aws_s3_bucket_lifecycle_configuration" "platform" {
       days_after_initiation = 7
     }
   }
+
+  # Model exports became append-only in Day 2 of the GitOps week: each export
+  # writes models/<mlflow_run_id>/ and never overwrites, which is what makes a
+  # version pointer in git addressable and therefore what makes rollback real
+  # (DEPLOYMENT_ARCHITECTURE.md §6.1). The cost of that property is unbounded
+  # growth -- roughly 250 MB per model per retrain, on a @daily DAG.
+  #
+  # 90 days is chosen against the rollback window, not against storage price.
+  # Rolling back to a model that has not served since last quarter is not a
+  # rollback, it is a re-deploy, and it should go through the promotion gate
+  # like anything else. Anything still deployed is far newer than this.
+  #
+  # NOTE: expiration deletes objects by age regardless of whether a git ref
+  # still points at them. If a version pinned in gitops/values/inference.yaml
+  # ages out, the initContainer fails on a missing prefix -- loudly, at pod
+  # start, rather than silently serving the wrong weights. That is the right
+  # failure direction, but it is a real constraint: do not pin a version and
+  # then leave it undeployed for three months.
+  rule {
+    id     = "expire-old-model-versions"
+    status = "Enabled"
+
+    filter {
+      prefix = "models/"
+    }
+
+    expiration {
+      days = 90
+    }
+  }
 }
 
 # ---------------------------------------------------------------------------
