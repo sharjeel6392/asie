@@ -39,6 +39,11 @@ ARGOCD_REPO_SECRET="asie-repo-creds"
 REPO_URL="git@github.com:sharjeel6392/asie.git"
 # Secrets Manager entry holding the read-only deploy key's PRIVATE half.
 ARGOCD_REPO_SECRET_SM="asie/argocd-repo-read"
+# WRITE-scoped key, mounted by the Airflow pods so the retraining and rollback
+# DAGs can commit model versions. Separate from the read key by design: ArgoCD
+# needs read only, so a compromised ArgoCD cannot rewrite desired state.
+AIRFLOW_REPO_SECRET_SM="asie/airflow-repo-write"
+AIRFLOW_REPO_SECRET="asie-gitops-write"
 
 INFERENCE_RELEASE="asie"
 AIRFLOW_RELEASE="airflow"
@@ -291,6 +296,37 @@ bootstrap_secrets() {
     # TODO (Day 3, blocked on a Secrets Manager entry): these two move to
     # External Secrets Operator, at which point this function disappears and
     # the last imperative step in the deploy path goes with it.
+
+    step "Installing the GitOps WRITE deploy key for Airflow..."
+    # Airflow is the only workload that commits to the repo: the retraining
+    # pipeline deploys a candidate as shadow, and asie_auto_rollback reverts a
+    # failing primary. Separate key from ArgoCD's read-only one, so a
+    # compromised ArgoCD cannot rewrite desired state.
+    #
+    # Bootstrapped here rather than via External Secrets for the same reason as
+    # the ArgoCD credential: eks/airflow-values.yaml mounts this secret as a
+    # volume, so a missing secret is not a degraded feature -- the scheduler
+    # and webserver pods never start at all.
+    local write_key
+    write_key=$(aws secretsmanager get-secret-value \
+                  --secret-id "$AIRFLOW_REPO_SECRET_SM" \
+                  --region "$REGION" \
+                  --query SecretString --output text 2>/dev/null | tr -d '\r')
+
+    if [ -z "$write_key" ]; then
+        echo "WARNING: no $AIRFLOW_REPO_SECRET_SM in Secrets Manager." >&2
+        echo "  Airflow pods mount this secret and will not start without it." >&2
+        echo "  Create a WRITE-scoped deploy key and store it, then re-run." >&2
+        exit 1
+    fi
+
+    # Same CR strip and trailing newline as the ArgoCD key -- the Windows aws
+    # CLI emits CRLF, and an OpenSSH key with carriage returns or without its
+    # final newline fails to parse in a way that reads like a revoked key.
+    kubectl -n $AIRFLOW_NAMESPACE create secret generic $AIRFLOW_REPO_SECRET \
+        --from-literal=ssh-privatekey="${write_key}"$'\n' \
+        --dry-run=client -o yaml | kubectl apply -f - > /dev/null
+    echo "GitOps write key installed."
 }
 
 ensure_repo_credential() {
