@@ -170,3 +170,29 @@ Authored offline with the cluster paused. Everything below renders and parses; *
 ### Correction worth recording
 
 I reported the cluster as pausing when it was not. The detached launch died silently (0-byte log) and I took the absence of errors as progress. The reliable signal was the cluster itself: ArgoCD Applications still present and every namespace Active twenty minutes in, when `teardown_workloads` deletes the Ingress within the first minute. That is the **third** time this session that a process-level signal misled me where the resource-level one was accurate.
+
+---
+
+## Day 6 — Automated Rollback 🟣 Authored, awaiting verification
+
+**Notion deliverables:** rollback automation · health validation · failure detection · alert integration.
+
+**The git write path, which Day 2 deferred** (`src/gitops/values_writer.py`). Until now `export_models()` put weights in S3 and `promote_to_primary()` recorded a decision, but neither changed what serves — ArgoCD reconciles from git, so a model is deployed exactly when its run_id is committed. It edits one key by regex rather than round-tripping the YAML: `safe_load`/`safe_dump` would discard every comment in that file, and those comments are the only record of *why* the values are what they are. A values file that loses its reasoning on the first automated commit is worse than one edited by pattern match.
+
+**The loop is now closed in code.** `retraining_pipeline` deploys its candidate as **shadow** — not primary, because the promotion gate needs online evidence before the model serves anyone, and it can only gather that by running in shadow first.
+
+**What rollback covers that nothing else does.** Layer 0 (probes) stops a model that cannot load from taking traffic; Day 5's canary analysis aborts a bad version mid-rollout. Both act *during* a deploy. This handles a version that started healthy, passed its canary, and degraded afterwards.
+
+**Three guards, the first being the one that matters:**
+
+- **Age.** A model healthy for days that suddenly errors is far more likely a platform failure — RDS unreachable, a node dying, S3 throttling — than a model defect that waited three days to appear. Rolling back fixes none of those and adds a deploy to an ongoing incident. Automated rollback only fires close to a change, where the change is the most probable cause.
+- **Request-rate floor.** One failure in three requests is 33% and means nothing; without a floor every quiet night becomes a deploy.
+- **"No traffic" ≠ "no errors."** Same number, opposite meanings. Conflating them lets a pod serving nothing read as perfectly healthy.
+
+**Polling, not webhook.** Alertmanager's payload does not match Airflow's trigger schema, so push needs an adapter service whose own failure is silent — nothing notices a trigger that never arrives. Polling reuses Airflow and Prometheus and degrades honestly.
+
+Rolls back to the previous **primary** from history, never to the shadow: the shadow is the *next* candidate, so rolling "back" onto it would deploy something newer than what is failing.
+
+**Tests: 62 passed**, up from 49; same 5 pre-existing failures.
+
+**Blocked on:** the write-scoped deploy key (`asie/airflow-repo-write` → `asie-gitops-write` secret). Nothing here has run.
