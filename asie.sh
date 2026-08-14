@@ -245,11 +245,18 @@ ensure_repo_credential() {
     # of needing to be recreated by hand on every rebuild.
     step "Installing the ArgoCD repository credential from Secrets Manager..."
 
+    # `| tr -d '\r'` is load-bearing on Windows. The aws CLI there emits CRLF,
+    # and an OpenSSH private key with carriage returns fails to parse -- ssh
+    # reports "error in libcrypto" and then "Permission denied (publickey)",
+    # which reads exactly like a key that was never added to GitHub. Confirmed
+    # by testing the same key with and without the strip.
     local key
-    if ! key=$(aws secretsmanager get-secret-value \
-                 --secret-id "$ARGOCD_REPO_SECRET_SM" \
-                 --region "$REGION" \
-                 --query SecretString --output text 2>/dev/null); then
+    key=$(aws secretsmanager get-secret-value \
+            --secret-id "$ARGOCD_REPO_SECRET_SM" \
+            --region "$REGION" \
+            --query SecretString --output text 2>/dev/null | tr -d '\r')
+
+    if [ -z "$key" ]; then
         cat >&2 <<EOF
 
 ERROR: Secrets Manager has no entry "$ARGOCD_REPO_SECRET_SM".
@@ -276,10 +283,13 @@ EOF
     # The argocd.argoproj.io/secret-type=repository label is what makes ArgoCD
     # DISCOVER this secret at all. Without it the secret exists, looks correct,
     # and is silently ignored.
+    # The $'\n' is not cosmetic: $( ) strips every trailing newline, and an
+    # OpenSSH key without its final newline is malformed. Same failure mode as
+    # the CR above, and just as misleading.
     kubectl -n $ARGOCD_NAMESPACE create secret generic $ARGOCD_REPO_SECRET \
         --from-literal=type=git \
         --from-literal=url="$REPO_URL" \
-        --from-literal=sshPrivateKey="$key" \
+        --from-literal=sshPrivateKey="${key}"$'\n' \
         --dry-run=client -o yaml \
       | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml \
       | kubectl apply -f - > /dev/null
