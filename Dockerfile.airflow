@@ -2,8 +2,15 @@ FROM apache/airflow:2.10.5-python3.12
 
 USER root
 
+# git is required, not incidental: src/gitops/values_writer.py shells out to it
+# to clone, commit and push the deployed model version, which is how the
+# retraining pipeline deploys a shadow and how asie_auto_rollback reverts a bad
+# primary. Under GitOps the commit IS the deploy, so without git in this image
+# the pipeline can train, register and export a model and then silently fail to
+# deploy any of it. ssh is already present in the base image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
