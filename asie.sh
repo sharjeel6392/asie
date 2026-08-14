@@ -543,6 +543,31 @@ destroy_infra() {
         --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy 2>/dev/null || true
     aws iam delete-role --role-name AmazonEKS_EBS_CSI_DriverRole_asie 2>/dev/null \
         && echo "  deleted AmazonEKS_EBS_CSI_DriverRole_asie" || true
+
+    # The deploy keys, created with `aws secretsmanager create-secret` during
+    # the GitOps week and owned by neither Terraform nor eksctl. Left behind
+    # they bill ~$0.40/secret/month indefinitely -- small enough to go
+    # unnoticed on a credit-funded account and to start charging a card the
+    # moment those credits lapse.
+    #
+    # --force-delete-without-recovery, not the default 30-day window: a
+    # teardown that leaves resources scheduled for deletion has not finished,
+    # and the private keys are regenerable in seconds. Recovery would only
+    # matter if the key were the irreplaceable thing, and it is not -- the
+    # GitHub side has to be re-registered either way.
+    step "Removing GitOps deploy keys from Secrets Manager..."
+    for s in "$ARGOCD_REPO_SECRET_SM" "$AIRFLOW_REPO_SECRET_SM"; do
+        aws secretsmanager delete-secret --secret-id "$s" --region "$REGION" \
+            --force-delete-without-recovery > /dev/null 2>&1 \
+            && echo "  deleted $s" || true
+    done
+
+    cat <<EOF
+
+NOTE: the GitHub deploy keys are now orphaned -- their private halves are gone
+but the public halves remain registered on the repo. Remove them under
+Settings > Deploy keys; nothing here can do that for you.
+EOF
 }
 
 confirm_destroy() {
