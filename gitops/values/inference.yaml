@@ -75,4 +75,4 @@ podAnnotations:
 # step. Flipping this to true is itself the Day 5 verification, done as a
 # watched one-line commit with the cluster in front of me.
 canary:
-  enabled: false
+  enabled: true
