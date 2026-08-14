@@ -111,7 +111,7 @@ env:
   - name: ASIE_GITOPS_SSH_KEY
     value: "/etc/asie-gitops/ssh-privatekey"
   - name: ASIE_PROMETHEUS_URL
-    value: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+    value: "http://kube-prom-prometheus.monitoring.svc.cluster.local:9090"
 
 # Mounts the WRITE-scoped deploy key. Deliberately a different key from the one
 # ArgoCD reads with: ArgoCD needs read only, and keeping them separate means a

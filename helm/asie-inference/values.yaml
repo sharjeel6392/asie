@@ -100,7 +100,7 @@ canary:
     - setWeight: 50
     - analysis: true
   analysis:
-    prometheusAddress: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+    prometheusAddress: http://kube-prom-prometheus.monitoring.svc.cluster.local:9090
     # Rate window. 2m against a 30s scrape gives four samples -- enough that
     # one slow scrape does not swing the ratio.
     window: 2m
