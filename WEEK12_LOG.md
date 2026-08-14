@@ -146,3 +146,27 @@ Note the intermediate run still showed one 502: the rollout that *installs* the 
 ### A measurement lesson worth keeping
 
 An apparent **50% failure rate** was entirely client-side: `curl` against the ALB hostname without `-4` alternates `000`/`200` on this Windows host, while both A records return 200 addressed directly and `-4` gives 6/6. I nearly reported a healthy stack as half-broken. Combined with the earlier "no processes running" during a live run, the pattern is consistent: **verify the instrument before believing the measurement.**
+
+---
+
+## Day 5 — Canary Deployment 🟣 Authored, awaiting verification
+
+**Notion deliverables:** canary deployment · traffic splitting · validation metrics.
+
+Authored offline with the cluster paused. Everything below renders and parses; **none of it has run against a cluster**, and it is deliberately left disabled.
+
+**Argo Rollouts as its own Application** (wave 1) — same dependency shape as kube-prometheus-stack owning the ServiceMonitor CRD, since this chart owns `rollouts.argoproj.io` and the inference chart in wave 2 renders a `Rollout`. It is a separate controller from ArgoCD despite the shared project name.
+
+**What canary adds over Day 4's rolling update.** A rolling update swaps pods as fast as they go Ready and has no opinion on whether the new version is any good. The canary holds 20% then 50% of real traffic on the new version and aborts by itself if the numbers are bad. It does *not* replace shadow mode: shadow runs the candidate against 100% of traffic at 0% blast radius but only ever logs its output, so it proves correctness and never exposure. The canary is the inverse — real users get real responses — which makes it the only thing that tests the deploy itself.
+
+**Three decisions worth keeping:**
+
+- The pod spec moved to `_helpers.tpl`, shared by Deployment and Rollout. Two copies of a 110-line spec drift the first time one is edited, and the drift is invisible — whichever object is not currently enabled quietly carries stale config until the flag flips.
+- The analysis query filters on `rollouts_pod_template_hash`, and the ServiceMonitor gained `podTargetLabels` to carry that label onto every series. Without it canary and stable are indistinguishable in Prometheus, and a canary failing **100%** of its requests at a 20% weight moves the blended error rate by 20% — passing any sane threshold.
+- The HPA `scaleTargetRef` follows the workload kind. Left aimed at a Deployment that no longer exists it reports `FailedGetScale` and never scales — surfacing as an outage under load rather than as a deployment error.
+
+**`canary.enabled` stays FALSE.** A Rollout that fails to progress serves nothing, which is a worse failure than an extra step. Flipping the flag *is* the verification, to be done as a watched one-line commit with a cluster in front of me.
+
+### Correction worth recording
+
+I reported the cluster as pausing when it was not. The detached launch died silently (0-byte log) and I took the absence of errors as progress. The reliable signal was the cluster itself: ArgoCD Applications still present and every namespace Active twenty minutes in, when `teardown_workloads` deletes the Ingress within the first minute. That is the **third** time this session that a process-level signal misled me where the resource-level one was accurate.
